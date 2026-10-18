@@ -1,0 +1,797 @@
+-- ========== RoChess Auto V2: потужно українською ==========
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+for _, name in ipairs({"RoChessAutoV2", "RoChessAutoV1", "ChessAutoV11", "ChessAutoV10", "ChessAutoV9"}) do
+    local old = playerGui:FindFirstChild(name)
+    if old then old:Destroy() end
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "RoChessAutoV2"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.DisplayOrder = 999
+screenGui.Parent = playerGui
+
+-- ========== кольори ==========
+local COL_FG        = Color3.fromRGB(235, 235, 235)
+local COL_DIM       = Color3.fromRGB(120, 120, 120)
+local COL_SHADOW    = Color3.fromRGB(0, 0, 0)
+local COL_BLACK     = Color3.fromRGB(0, 0, 0)
+local COL_UA_BLUE   = Color3.fromRGB(0, 87, 183)
+local COL_UA_YELLOW = Color3.fromRGB(255, 215, 0)
+local COL_HINT      = Color3.fromRGB(95, 175, 255)
+local FONT = Enum.Font.GothamBold
+
+local function addTextStroke(label)
+    local s = Instance.new("UIStroke")
+    s.Thickness = 2.5
+    s.Color = COL_BLACK
+    s.Transparency = 0.65
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+    s.Parent = label
+    return s
+end
+
+local function addUkrainianOutline(btn)
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 2
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Transparency = 0
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    local grad = Instance.new("UIGradient")
+    grad.Rotation = 90
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.0, COL_UA_BLUE),
+        ColorSequenceKeypoint.new(0.5, COL_UA_BLUE),
+        ColorSequenceKeypoint.new(1.0, COL_UA_YELLOW),
+    })
+    grad.Parent = stroke
+    stroke.Parent = btn
+end
+
+local function makeButton(parent, size, position, labelText)
+    local wrap = Instance.new("Frame")
+    wrap.Size = UDim2.new(size.X.Scale, size.X.Offset, size.Y.Scale, size.Y.Offset + 6)
+    wrap.Position = position
+    wrap.BackgroundTransparency = 1
+    wrap.BorderSizePixel = 0
+    wrap.Parent = parent
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 1, -6)
+    btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    btn.BackgroundTransparency = 0.3
+    btn.BorderSizePixel = 0
+    btn.Text = ""
+    btn.AutoButtonColor = false
+    btn.Parent = wrap
+
+    local grad = Instance.new("UIGradient")
+    grad.Rotation = 90
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.0, Color3.fromRGB(90, 90, 90)),
+        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(20, 20, 20)),
+    })
+    grad.Parent = btn
+
+    addUkrainianOutline(btn)
+
+    local shadow = Instance.new("Frame")
+    shadow.Size = UDim2.new(1, 0, 0, 5)
+    shadow.Position = UDim2.new(0, 0, 1, -6)
+    shadow.BackgroundColor3 = COL_SHADOW
+    shadow.BackgroundTransparency = 0.2
+    shadow.BorderSizePixel = 0
+    shadow.ZIndex = 0
+    shadow.Parent = wrap
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.7, -8, 1, 0)
+    lbl.Position = UDim2.new(0, 8, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.TextColor3 = COL_FG
+    lbl.Font = FONT
+    lbl.TextSize = 14
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 2
+    lbl.Parent = btn
+    addTextStroke(lbl)
+
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(0, 30, 0, 16)
+    track.Position = UDim2.new(1, -38, 0.5, -8)
+    track.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    track.BorderSizePixel = 0
+    track.ZIndex = 2
+    track.Parent = btn
+    local trStroke = Instance.new("UIStroke")
+    trStroke.Thickness = 1
+    trStroke.Color = COL_DIM
+    trStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    trStroke.Parent = track
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 12, 0, 12)
+    knob.Position = UDim2.new(0, 2, 0.5, -6)
+    knob.BackgroundColor3 = COL_DIM
+    knob.BorderSizePixel = 0
+    knob.ZIndex = 3
+    knob.Parent = track
+
+    return btn, lbl, track, knob
+end
+
+-- ========== панель ==========
+local barWidth = 490
+local barY = -80
+local barX = -barWidth / 2
+
+local autoBtn, autoLbl, autoTrack, autoKnob = makeButton(
+    screenGui,
+    UDim2.new(0, 170, 0, 40),
+    UDim2.new(0.5, barX, 1, barY),
+    "потужний авто"
+)
+local suggestBtn, suggestLbl, suggestTrack, suggestKnob = makeButton(
+    screenGui,
+    UDim2.new(0, 180, 0, 40),
+    UDim2.new(0.5, barX + 178, 1, barY),
+    "потужні підказки"
+)
+local engineBtn, engineLbl, engineTrack, engineKnob = makeButton(
+    screenGui,
+    UDim2.new(0, 130, 0, 40),
+    UDim2.new(0.5, barX + 366, 1, barY),
+    "мозок"
+)
+engineTrack.Visible = false
+engineLbl.Size = UDim2.new(1, -16, 1, 0)
+engineLbl.Position = UDim2.new(0, 8, 0, 0)
+engineLbl.TextXAlignment = Enum.TextXAlignment.Center
+engineLbl.Text = "шукаю..."
+
+local statusStrip = Instance.new("TextLabel")
+statusStrip.Size = UDim2.new(0, barWidth + 40, 0, 14)
+statusStrip.Position = UDim2.new(0.5, -(barWidth + 40) / 2, 1, barY + 46)
+statusStrip.BackgroundTransparency = 1
+statusStrip.Text = ""
+statusStrip.TextColor3 = COL_DIM
+statusStrip.Font = FONT
+statusStrip.TextSize = 10
+statusStrip.TextXAlignment = Enum.TextXAlignment.Center
+statusStrip.Parent = screenGui
+addTextStroke(statusStrip)
+
+local function log(msg)
+    statusStrip.Text = tostring(msg):lower()
+    print("[потужно] " .. tostring(msg))
+end
+
+local function setEngine(name)
+    engineLbl.Text = tostring(name):lower()
+    engineLbl.TextColor3 = (name:lower():find("vortex")) and COL_FG or COL_DIM
+end
+
+local TWEEN_ON  = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TWEEN_OFF = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local function animateToggle(knob, track, on)
+    local targetPos = on and UDim2.new(1, -14, 0.5, -6) or UDim2.new(0, 2, 0.5, -6)
+    TweenService:Create(knob, on and TWEEN_ON or TWEEN_OFF, {
+        Position = targetPos,
+        BackgroundColor3 = on and COL_FG or COL_DIM,
+    }):Play()
+    TweenService:Create(track, on and TWEEN_ON or TWEEN_OFF, {
+        BackgroundColor3 = on and Color3.fromRGB(50, 50, 50) or Color3.fromRGB(10, 10, 10),
+    }):Play()
+end
+
+-- ========== RoChess state ==========
+local state = {
+    controller = nil,
+    lastScan = 0,
+    scanError = nil,
+    autoPlay = false,
+    autoHighlight = false,
+    useVortex = true,
+    brilliantMode = true,
+    brilliantTolerance = 90,
+    searchTime = 1,
+    depth = 12,
+    playDelay = 0.35,
+    analysisBusy = false,
+    analysisToken = 0,
+    workerRunning = false,
+    destroyed = false,
+    lastAutoFen = nil,
+    lastHighlightFen = nil,
+    best = nil,
+}
+
+local autoOn = false
+local suggestOn = false
+
+local function refreshAutoVisual()
+    animateToggle(autoKnob, autoTrack, autoOn)
+    autoLbl.Text = autoOn and "потужний авто" or "потужний авто"
+end
+
+local function refreshSuggestVisual()
+    animateToggle(suggestKnob, suggestTrack, suggestOn)
+    suggestLbl.Text = suggestOn and "потужні підказки" or "потужні підказки"
+end
+
+-- ========== load RoChess modules ==========
+local Chess = ReplicatedStorage:WaitForChild("Chess", 15)
+if not Chess then
+    log("rochess не знайдено, потужно сумно")
+    return
+end
+
+local Engine, Bot, Openings, VortexBot
+local okE, eE = pcall(function() return require(Chess:WaitForChild("Engine")) end)
+if not okE or not eE then log("engine зламався: " .. tostring(eE)) return end
+Engine = eE
+
+local okB, eB = pcall(function() return require(Chess:WaitForChild("Bot")) end)
+if not okB or not eB then log("bot зламався: " .. tostring(eB)) return end
+Bot = eB
+
+pcall(function() Openings = require(Chess:WaitForChild("Openings")) end)
+pcall(function() VortexBot = require(Chess:WaitForChild("VortexBot")) end)
+
+local PROMOTION_TYPES = { q = 5, r = 4, b = 3, n = 2 }
+
+-- ========== helpers ==========
+local function formatEvaluation(result)
+    local mate = tonumber(result and result.mate)
+    if mate and mate ~= 0 then return "mate in " .. tostring(mate) end
+    local score = tonumber(result and result.score)
+    if not score then return "?" end
+    if math.abs(score) >= 29000 then
+        return score > 0 and "білі виграють" or "чорні виграють"
+    end
+    return string.format("%+.2f", score / 100)
+end
+
+local function getUpvalueValues(fn)
+    local values = {}
+    if type(debug) == "table" and type(debug.getupvalues) == "function" then
+        local ok, result = pcall(debug.getupvalues, fn)
+        if ok and type(result) == "table" then
+            for _, value in pairs(result) do table.insert(values, value) end
+        end
+    end
+    if #values == 0 and type(debug) == "table" and type(debug.getupvalue) == "function" then
+        for index = 1, 60 do
+            local ok, nameOrValue, value = pcall(debug.getupvalue, fn, index)
+            if not ok or nameOrValue == nil then break end
+            if value ~= nil then table.insert(values, value) else table.insert(values, nameOrValue) end
+        end
+    end
+    return values
+end
+
+local function isController(value)
+    if type(value) ~= "table" then return false end
+    local board = value.board
+    if type(board) ~= "table" then return false end
+    if type(value.render) ~= "function" or type(value.onBoardMove) ~= "function" or type(value.setSession) ~= "function" then
+        return false
+    end
+    local ok, methodsExist = pcall(function()
+        return type(board.setTint) == "function" and type(board.setArrow) == "function"
+    end)
+    return ok and methodsExist
+end
+
+local function findController(force)
+    if state.controller and isController(state.controller) then return state.controller end
+    if not force and os.clock() - state.lastScan < 2 then return nil end
+    state.lastScan = os.clock()
+    state.controller = nil
+    state.scanError = nil
+    if type(getgc) ~= "function" then
+        state.scanError = "екзекутор без getgc, потужно сумно"
+        return nil
+    end
+    local ok, objects = pcall(getgc, true)
+    if not ok or type(objects) ~= "table" then ok, objects = pcall(getgc) end
+    if not ok or type(objects) ~= "table" then
+        state.scanError = "не можу сканувати гру"
+        return nil
+    end
+    for _, object in pairs(objects) do
+        if isController(object) then state.controller = object; return object end
+    end
+    for _, object in pairs(objects) do
+        if type(object) == "function" then
+            for _, upvalue in ipairs(getUpvalueValues(object)) do
+                if isController(upvalue) then state.controller = upvalue; return upvalue end
+            end
+        end
+    end
+    state.scanError = "дошку не знайдено, потужно сумно"
+    return nil
+end
+
+local function getPosition(app)
+    if not app then return nil, nil, state.scanError or "нема контролера" end
+    local session = app.session
+    if type(session) ~= "table" then return nil, nil, "нема активної гри" end
+    if type(session.engine) ~= "table" or type(session.engine.getFen) ~= "function" then
+        return session, nil, "сесія без позиції"
+    end
+    local ok, fen = pcall(function() return session.engine:getFen() end)
+    if not ok or type(fen) ~= "string" or fen == "" then
+        return session, nil, "не читаю позицію"
+    end
+    return session, fen, nil
+end
+
+local function currentFen(session)
+    if not session or type(session.engine) ~= "table" then return nil end
+    local ok, fen = pcall(function() return session.engine:getFen() end)
+    if ok and type(fen) == "string" then return fen end
+    return nil
+end
+
+local function isMyTurn(session)
+    if not session then return false end
+    if type(session.isMyTurn) == "function" then
+        local ok, result = pcall(function() return session:isMyTurn() end)
+        if ok and type(result) == "boolean" then return result end
+    end
+    local fen = currentFen(session)
+    local side = fen and string.match(fen, "^[^ ]+%s+([wb])")
+    local sideValue = side == "w" and 1 or side == "b" and -1 or nil
+    return sideValue ~= nil and session.myColor ~= nil and sideValue == session.myColor
+end
+
+local function moveBlockReason(session, requireAutoPermission)
+    if not session then return "нема сесії" end
+    if session.over then return "гра закінчилась" end
+    if session.pz then
+        if session.pz.busy then return "puzzle обробляється" end
+        if session.pz.done then return "puzzle закінчено" end
+        if session.pz.wrong then return "puzzle неправильний хід" end
+    end
+    if type(session.ucis) == "table" and type(session.viewPly) == "number" and session.viewPly < #session.ucis then
+        return "повернись до живої позиції"
+    end
+    if not isMyTurn(session) then return "не твій хід" end
+    if session.kind == "puzzle" and requireAutoPermission then return "puzzle вимкнено" end
+    return nil
+end
+
+local function clearHighlights(app)
+    app = app or state.controller
+    if not app or not app.board then return end
+    pcall(function() app.board:setTint("hint", nil) end)
+    pcall(function() app.board:setArrow("hint", nil) end)
+end
+
+local function highlightUci(app, uci)
+    if not app or not app.board or type(uci) ~= "string" or #uci < 4 then return false end
+    local fromSquare = string.sub(uci, 1, 2)
+    local toSquare = string.sub(uci, 3, 4)
+    local fromIndex = Engine.algToIndex64(fromSquare)
+    local toIndex = Engine.algToIndex64(toSquare)
+    if type(fromIndex) ~= "number" or type(toIndex) ~= "number" then return false end
+    clearHighlights(app)
+    local ok = pcall(function()
+        app.board:setTint("hint", fromIndex, COL_HINT, 0.35)
+        app.board:setArrow("hint", fromIndex, toIndex, COL_HINT, 0.15)
+    end)
+    return ok
+end
+
+-- ========== brilliant search ==========
+local BRILLIANT_PIECE_VALUES = { [1] = 100, [2] = 320, [3] = 330, [4] = 500, [5] = 900, [6] = 20000 }
+
+local function threatenedMajorPieces(position, attackerSide)
+    local threatened = {}
+    if type(Engine.SQUARES) ~= "table" or type(position.board) ~= "table" or type(position.isAttacked) ~= "function" then
+        return threatened
+    end
+    for index = 1, 64 do
+        local square = Engine.SQUARES[index]
+        local piece = position.board[square]
+        if type(piece) == "number" and piece * attackerSide < 0 and math.abs(piece) >= 3 and math.abs(piece) <= 5 then
+            local ok, attacked = pcall(function() return position:isAttacked(square, attackerSide) end)
+            if ok and attacked then threatened[square] = true end
+        end
+    end
+    return threatened
+end
+
+local function findBrilliantMove(fen, token, baseline)
+    if type(Bot.buildEngine) ~= "function" or type(Bot.Search) ~= "table" or type(Bot.Search.new) ~= "function" then
+        return nil
+    end
+    local okPosition, position = pcall(Bot.buildEngine, fen, {})
+    if not okPosition or type(position) ~= "table" or type(position.legalMoves) ~= "function" or type(position.makeMove) ~= "function" or type(position.undoMove) ~= "function" or type(position.moveToUci) ~= "function" then
+        return nil
+    end
+    local side = tonumber(position.side)
+    if side ~= 1 and side ~= -1 then return nil end
+    local searchOk, search = pcall(Bot.Search.new, position)
+    if not searchOk or type(search) ~= "table" or type(search.rootScores) ~= "function" then return nil end
+    local budget = math.clamp(state.searchTime * 0.55, 0.25, 0.8)
+    local deadline = os.clock() + budget
+    search.deadline = deadline
+    search.soft = deadline
+    search.slice = 0.006
+    search.sliceStart = os.clock()
+    search.cancelled = function() return state.destroyed or token ~= state.analysisToken end
+    local rootScores
+    local completedDepth = 0
+    local maxDepth = math.clamp(math.floor(state.depth), 2, 16)
+    for depth = 1, maxDepth do
+        if state.destroyed or token ~= state.analysisToken or os.clock() >= deadline then break end
+        local okScores, scores = pcall(function() return search:rootScores(depth) end)
+        if not okScores or type(scores) ~= "table" or #scores == 0 then break end
+        rootScores = scores
+        completedDepth = depth
+        if search.stop then break end
+    end
+    if type(rootScores) ~= "table" or #rootScores < 2 or state.destroyed or token ~= state.analysisToken then return nil end
+    local topScore = -math.huge
+    for _, item in ipairs(rootScores) do
+        if type(item) == "table" and type(item.score) == "number" and item.score > topScore then
+            topScore = item.score
+        end
+    end
+    if topScore == -math.huge then return nil end
+    local referenceScore = topScore
+    local originalThreats = threatenedMajorPieces(position, side)
+    local tacticalCandidates = {}
+    local tolerance = math.clamp(tonumber(state.brilliantTolerance) or 90, 25, 150)
+    local epFlag = Engine.F_EP
+    for _, item in ipairs(rootScores) do
+        if state.destroyed or token ~= state.analysisToken then return nil end
+        if type(item) == "table" and type(item.move) == "number" and type(item.score) == "number" then
+            local loss = math.max(0, referenceScore - item.score)
+            if loss <= tolerance then
+                local move = item.move
+                local fromSquare = bit32.band(move, 127)
+                local toSquare = bit32.extract(move, 7, 7)
+                local promotionCode = bit32.extract(move, 14, 3)
+                local movingPiece = tonumber(position.board[fromSquare]) or 0
+                local capturedPiece = tonumber(position.board[toSquare]) or 0
+                local isEnPassant = epFlag ~= nil and bit32.extract(move, 17, 3) == epFlag
+                local captureValue = capturedPiece ~= 0 and (BRILLIANT_PIECE_VALUES[math.abs(capturedPiece)] or 0) or (isEnPassant and 100 or 0)
+                local movingValue = BRILLIANT_PIECE_VALUES[math.abs(movingPiece)] or 0
+                local uci
+                pcall(function() uci = position:moveToUci(move) end)
+                if type(uci) == "string" then
+                    local madeMove = false
+                    local givesCheck = false
+                    local isHanging = false
+                    local newThreatCount = 0
+                    local evalOk = pcall(function()
+                        position:makeMove(move)
+                        madeMove = true
+                        if type(position.isAttacked) == "function" and type(position.kingSq) == "table" then
+                            givesCheck = position:isAttacked(position.kingSq[-side], side) == true
+                            isHanging = position:isAttacked(toSquare, -side) == true
+                        end
+                        local afterThreats = threatenedMajorPieces(position, side)
+                        for square in pairs(afterThreats) do
+                            if not originalThreats[square] then newThreatCount += 1 end
+                        end
+                    end)
+                    if madeMove then pcall(function() position:undoMove() end) end
+                    if evalOk then
+                        local isPromotion = promotionCode ~= 0 or #uci >= 5
+                        local isSacrifice = movingValue >= 300 and movingValue > captureValue and isHanging and (givesCheck or newThreatCount > 0 or loss <= 35)
+                        local priority = 0
+                        local reasons = {}
+                        if newThreatCount >= 2 then priority += 520; table.insert(reasons, "fork") elseif newThreatCount == 1 then priority += 100; table.insert(reasons, "new attack") end
+                        if givesCheck then priority += 180; table.insert(reasons, "check") end
+                        if captureValue >= 900 then priority += 190; table.insert(reasons, "queen capture")
+                        elseif captureValue >= 500 then priority += 145; table.insert(reasons, "rook capture")
+                        elseif captureValue >= 300 then priority += 95; table.insert(reasons, "piece capture")
+                        elseif captureValue > 0 then priority += 45; table.insert(reasons, "capture") end
+                        if isPromotion then priority += 240; table.insert(reasons, "promotion") end
+                        if isSacrifice then priority += 225; table.insert(reasons, "sacrifice") end
+                        if uci ~= (baseline and baseline.best) then priority += 18 end
+                        local utility = priority - loss * 0.42
+                        if priority >= 120 then
+                            table.insert(tacticalCandidates, {
+                                uci = uci, score = item.score, loss = loss,
+                                utility = utility, reason = table.concat(reasons, ", "),
+                                depth = completedDepth,
+                            })
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if #tacticalCandidates == 0 then return nil end
+    table.sort(tacticalCandidates, function(a, b)
+        if a.utility == b.utility then return a.score > b.score end
+        return a.utility > b.utility
+    end)
+    local chosen = tacticalCandidates[1]
+    local nearTop = {}
+    for _, candidate in ipairs(tacticalCandidates) do
+        if chosen.utility - candidate.utility <= 22 then table.insert(nearTop, candidate) end
+    end
+    if #nearTop > 1 then chosen = nearTop[math.random(1, #nearTop)] end
+    return chosen
+end
+
+local function analyzeFen(fen, token)
+    local options = {
+        slice = 0.01,
+        cancelled = function() return state.destroyed or token ~= state.analysisToken end,
+    }
+    local result
+    if state.useVortex and VortexBot and type(VortexBot.analyse) == "function" then
+        local ok, value = pcall(function()
+            return VortexBot.analyse(fen, {}, state.searchTime, state.depth, options)
+        end)
+        if ok and type(value) == "table" then
+            result = value
+            setEngine("vortex")
+        end
+    end
+    if type(result) ~= "table" or (result.best == nil and result.terminal == nil) then
+        local ok, value = pcall(function()
+            return Bot.analyse(fen, {}, state.searchTime, state.depth, options)
+        end)
+        if ok and type(value) == "table" then
+            result = value
+            setEngine("bot")
+        elseif not result then
+            return nil, tostring(value)
+        end
+    end
+    if type(result) ~= "table" then return nil, "engine не дав результату" end
+    if result.best ~= nil and type(result.best) ~= "string" then return nil, "engine дав не той хід" end
+    if state.brilliantMode and result.best ~= nil and token == state.analysisToken then
+        local engineBest = result.best
+        local tacticalMove = findBrilliantMove(fen, token, result)
+        if tacticalMove and type(tacticalMove.uci) == "string" then
+            result.engineBest = engineBest
+            result.best = tacticalMove.uci
+            result.brilliantMove = tacticalMove.reason
+            result.brilliantLoss = tacticalMove.loss
+            result.tacticalDepth = tacticalMove.depth
+            if tacticalMove.uci ~= engineBest then
+                local sideToMove = string.match(fen, "^[^ ]+%s+([wb])")
+                local sideValue = sideToMove == "w" and 1 or sideToMove == "b" and -1 or 1
+                result.score = tacticalMove.score * sideValue
+                result.mate = nil
+            end
+        end
+    end
+    return result
+end
+
+-- ========== move submit ==========
+local function sendUciMove(app, session, fen, uci, requireAutoPermission)
+    if state.destroyed then return false, "script stopped" end
+    if not app or app.session ~= session then return false, "сесія змінилась" end
+    if currentFen(session) ~= fen then return false, "позиція змінилась" end
+    local reason = moveBlockReason(session, requireAutoPermission)
+    if reason then return false, reason end
+    if type(uci) ~= "string" or not string.match(uci, "^[a-h][1-8][a-h][1-8][qrbn]?$") then
+        return false, "хід не uci"
+    end
+    local fromIndex = Engine.algToIndex64(string.sub(uci, 1, 2))
+    local toIndex = Engine.algToIndex64(string.sub(uci, 3, 4))
+    local promoLetter = string.sub(uci, 5, 5)
+    local promoType = PROMOTION_TYPES[promoLetter]
+    if type(fromIndex) ~= "number" or type(toIndex) ~= "number" then
+        return false, "не конвертую клітинки"
+    end
+    local moveHandler
+    if session.kind == "puzzle" then
+        moveHandler = app.puzzleMove
+        if type(moveHandler) ~= "function" then return false, "нема puzzleMove" end
+    else
+        moveHandler = app.onBoardMove
+        if type(moveHandler) ~= "function" then return false, "нема onBoardMove" end
+    end
+    local ok, response = pcall(function()
+        return moveHandler(fromIndex, toIndex, promoType, false)
+    end)
+    if not ok then return false, "move handler error: " .. tostring(response) end
+    if response == false then return false, "гра відхилила хід" end
+    return true, uci
+end
+
+-- ========== analysis runner ==========
+-- ALWAYS highlights the suggested move, then plays it if auto.
+local function runAnalysis(app, session, fen, playAfter, source)
+    if state.destroyed or state.analysisBusy then return false end
+    state.analysisBusy = true
+    state.analysisToken += 1
+    local token = state.analysisToken
+
+    task.spawn(function()
+        local result, err = analyzeFen(fen, token)
+        if state.destroyed or token ~= state.analysisToken then
+            state.analysisBusy = false
+            return
+        end
+        state.analysisBusy = false
+
+        if not result then
+            log("аналіз зламався: " .. tostring(err))
+            if source == "auto" then state.lastAutoFen = fen end
+            if source == "suggest" then state.lastHighlightFen = fen end
+            return
+        end
+
+        if not app or app.session ~= session or currentFen(session) ~= fen then
+            log("позиція змінилась, потужно")
+            return
+        end
+
+        if type(result.best) ~= "string" then
+            log("нема ходу, потужно сумно")
+            state.best = nil
+            if source == "auto" then state.lastAutoFen = fen end
+            if source == "suggest" then state.lastHighlightFen = fen end
+            clearHighlights(app)
+            return
+        end
+
+        state.best = { app = app, session = session, fen = fen, uci = result.best, result = result }
+        local evalText = formatEvaluation(result)
+        log("хід " .. result.best .. " (" .. evalText .. ")")
+
+        -- ALWAYS highlight the move — auto or suggest
+        if isMyTurn(session) then
+            highlightUci(app, result.best)
+        else
+            clearHighlights(app)
+        end
+
+        if source == "suggest" then
+            if source == "suggest" then state.lastHighlightFen = fen end
+            return
+        end
+
+        if playAfter then
+            task.wait(state.playDelay)
+            if state.destroyed or token ~= state.analysisToken then return end
+            local success, message = sendUciMove(app, session, fen, result.best, source == "auto")
+            if success then
+                log("зіграв " .. tostring(message) .. " потужно")
+            else
+                log("не зіграв: " .. tostring(message))
+            end
+            if source == "auto" then state.lastAutoFen = fen end
+        end
+    end)
+    return true
+end
+
+-- ========== worker loop ==========
+local function startWorker()
+    if state.workerRunning or state.destroyed then return end
+    state.workerRunning = true
+    task.spawn(function()
+        while not state.destroyed and (state.autoPlay or state.autoHighlight) do
+            local app = findController(false)
+            if app then
+                local session, fen, positionError = getPosition(app)
+                if session and fen then
+                    if state.lastSession ~= session then
+                        state.lastSession = session
+                        state.lastAutoFen = nil
+                        state.lastHighlightFen = nil
+                    end
+
+                    local myTurn = isMyTurn(session)
+                    local wantsAuto = state.autoPlay and myTurn and moveBlockReason(session, true) == nil
+                    local needsPlay = wantsAuto and state.lastAutoFen ~= fen
+                    local needsHighlight = state.autoHighlight and myTurn and state.lastHighlightFen ~= fen
+
+                    if state.autoHighlight and not myTurn and state.lastHighlightFen ~= fen then
+                        clearHighlights(app)
+                        state.lastHighlightFen = fen
+                    end
+
+                    if not state.analysisBusy then
+                        if needsPlay then
+                            state.lastAutoFen = fen
+                            -- auto path always highlights, then submits
+                            runAnalysis(app, session, fen, true, "auto")
+                        elseif needsHighlight then
+                            state.lastHighlightFen = fen
+                            runAnalysis(app, session, fen, false, "suggest")
+                        end
+                    end
+                elseif positionError then
+                    log(positionError)
+                end
+            else
+                log(state.scanError or "дошку не знайдено")
+            end
+            task.wait(0.25)
+        end
+        state.workerRunning = false
+        if not state.destroyed and (state.autoPlay or state.autoHighlight) then
+            startWorker()
+        end
+    end)
+end
+
+-- ========== button handlers ==========
+autoBtn.MouseButton1Click:Connect(function()
+    autoOn = not autoOn
+    state.autoPlay = autoOn
+    refreshAutoVisual()
+    if autoOn then
+        state.lastAutoFen = nil
+        log("потужний авто включено")
+        startWorker()
+    else
+        log("потужний авто виключено")
+    end
+end)
+
+suggestBtn.MouseButton1Click:Connect(function()
+    suggestOn = not suggestOn
+    state.autoHighlight = suggestOn
+    refreshSuggestVisual()
+    if suggestOn then
+        state.lastHighlightFen = nil
+        log("потужні підказки включено")
+        startWorker()
+    else
+        clearHighlights()
+        state.lastHighlightFen = currentFen(state.controller and state.controller.session)
+        log("потужні підказки виключено")
+    end
+end)
+
+-- ========== rightshift ==========
+local hidden = false
+local function setAllVisible(v)
+    autoBtn.Parent.Visible = v
+    suggestBtn.Parent.Visible = v
+    engineBtn.Parent.Visible = v
+    statusStrip.Visible = v
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        hidden = not hidden
+        setAllVisible(not hidden)
+    end
+end)
+
+-- ========== startup ==========
+refreshAutoVisual()
+refreshSuggestVisual()
+setEngine(VortexBot and "vortex" or "bot")
+log("готово, потужно")
+
+task.spawn(function()
+    local app = findController(true)
+    if app then
+        local session, fen = getPosition(app)
+        if session and fen then
+            log("rochess знайдено, потужно")
+        else
+            log("гра ще не почалась, потужно")
+        end
+    else
+        log(state.scanError or "відкрий гру, потужно")
+    end
+end)
