@@ -1,0 +1,497 @@
+-- ========== Chess Auto V11: потужно українською ==========
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+for _, name in ipairs({"ChessAutoV11", "ChessAutoV10", "ChessAutoV9", "ChessAutoV8", "ChessAutoV7", "ChessAutoV6", "ChessAutoV5", "ChessAutoV4", "ChessAutoFinal", "ChessAutoV3"}) do
+    local old = playerGui:FindFirstChild(name)
+    if old then old:Destroy() end
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "ChessAutoV11"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.DisplayOrder = 999
+screenGui.Parent = playerGui
+
+-- ========== кольори ==========
+local COL_FG        = Color3.fromRGB(235, 235, 235)
+local COL_DIM       = Color3.fromRGB(120, 120, 120)
+local COL_SHADOW    = Color3.fromRGB(0, 0, 0)
+local COL_START     = Color3.fromRGB(255, 40, 40)
+local COL_DEST      = Color3.fromRGB(255, 140, 40)
+local COL_BLACK     = Color3.fromRGB(0, 0, 0)
+local COL_UA_BLUE   = Color3.fromRGB(0, 87, 183)
+local COL_UA_YELLOW = Color3.fromRGB(255, 215, 0)
+local FONT = Enum.Font.GothamBold
+
+-- ========== обводка тексту ==========
+local function addTextStroke(label)
+    local s = Instance.new("UIStroke")
+    s.Thickness = 2.5
+    s.Color = COL_BLACK
+    s.Transparency = 0.65
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
+    s.Parent = label
+    return s
+end
+
+-- ========== український градієнт на обводці ==========
+local function addUkrainianOutline(btn)
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 2
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Transparency = 0
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    local grad = Instance.new("UIGradient")
+    grad.Rotation = 90
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.0, COL_UA_BLUE),
+        ColorSequenceKeypoint.new(0.5, COL_UA_BLUE),
+        ColorSequenceKeypoint.new(1.0, COL_UA_YELLOW),
+    })
+    grad.Parent = stroke
+    stroke.Parent = btn
+end
+
+-- ========== кнопка ==========
+local function makeButton(parent, size, position, labelText)
+    local wrap = Instance.new("Frame")
+    wrap.Size = UDim2.new(size.X.Scale, size.X.Offset, size.Y.Scale, size.Y.Offset + 6)
+    wrap.Position = position
+    wrap.BackgroundTransparency = 1
+    wrap.BorderSizePixel = 0
+    wrap.Parent = parent
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 1, -6)
+    btn.Position = UDim2.new(0, 0, 0, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    btn.BackgroundTransparency = 0.3
+    btn.BorderSizePixel = 0
+    btn.Text = ""
+    btn.AutoButtonColor = false
+    btn.Parent = wrap
+
+    local grad = Instance.new("UIGradient")
+    grad.Rotation = 90
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.0, Color3.fromRGB(90, 90, 90)),
+        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(20, 20, 20)),
+    })
+    grad.Parent = btn
+
+    addUkrainianOutline(btn)
+
+    local shadow = Instance.new("Frame")
+    shadow.Size = UDim2.new(1, 0, 0, 5)
+    shadow.Position = UDim2.new(0, 0, 1, -6)
+    shadow.BackgroundColor3 = COL_SHADOW
+    shadow.BackgroundTransparency = 0.2
+    shadow.BorderSizePixel = 0
+    shadow.ZIndex = 0
+    shadow.Parent = wrap
+    local shStroke = Instance.new("UIStroke")
+    shStroke.Thickness = 1
+    shStroke.Color = COL_BLACK
+    shStroke.Transparency = 0.7
+    shStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    shStroke.Parent = shadow
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.7, -8, 1, 0)
+    lbl.Position = UDim2.new(0, 8, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = labelText
+    lbl.TextColor3 = COL_FG
+    lbl.Font = FONT
+    lbl.TextSize = 14
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 2
+    lbl.Parent = btn
+    addTextStroke(lbl)
+
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(0, 30, 0, 16)
+    track.Position = UDim2.new(1, -38, 0.5, -8)
+    track.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    track.BorderSizePixel = 0
+    track.ZIndex = 2
+    track.Parent = btn
+    local trStroke = Instance.new("UIStroke")
+    trStroke.Thickness = 1
+    trStroke.Color = COL_DIM
+    trStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    trStroke.Parent = track
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 12, 0, 12)
+    knob.Position = UDim2.new(0, 2, 0.5, -6)
+    knob.BackgroundColor3 = COL_DIM
+    knob.BorderSizePixel = 0
+    knob.ZIndex = 3
+    knob.Parent = track
+
+    return btn, lbl, track, knob
+end
+
+-- ========== панель знизу ==========
+local barWidth = 470
+local barY = -80
+local barX = -barWidth / 2
+
+local autoBtn, autoLbl, autoTrack, autoKnob = makeButton(
+    screenGui,
+    UDim2.new(0, 170, 0, 40),
+    UDim2.new(0.5, barX, 1, barY),
+    "потужний авто"
+)
+local suggestBtn, suggestLbl, suggestTrack, suggestKnob = makeButton(
+    screenGui,
+    UDim2.new(0, 180, 0, 40),
+    UDim2.new(0.5, barX + 178, 1, barY),
+    "потужні підказки"
+)
+local engineBtn, engineLbl, engineTrack, engineKnob = makeButton(
+    screenGui,
+    UDim2.new(0, 130, 0, 40),
+    UDim2.new(0.5, barX + 366, 1, barY),
+    "мозок"
+)
+engineTrack.Visible = false
+engineLbl.Size = UDim2.new(1, -16, 1, 0)
+engineLbl.Position = UDim2.new(0, 8, 0, 0)
+engineLbl.TextXAlignment = Enum.TextXAlignment.Center
+engineLbl.Text = "перевіряю..."
+
+-- ========== статус ==========
+local statusStrip = Instance.new("TextLabel")
+statusStrip.Size = UDim2.new(0, barWidth + 40, 0, 14)
+statusStrip.Position = UDim2.new(0.5, -(barWidth + 40) / 2, 1, barY + 46)
+statusStrip.BackgroundTransparency = 1
+statusStrip.Text = ""
+statusStrip.TextColor3 = COL_DIM
+statusStrip.Font = FONT
+statusStrip.TextSize = 10
+statusStrip.TextXAlignment = Enum.TextXAlignment.Center
+statusStrip.Parent = screenGui
+addTextStroke(statusStrip)
+
+local function log(msg)
+    statusStrip.Text = tostring(msg):lower()
+    print("[потужно] " .. tostring(msg))
+end
+
+local function setEngine(name)
+    engineLbl.Text = tostring(name):lower()
+    engineLbl.TextColor3 = (name:lower():find("stockfish")) and COL_FG or COL_DIM
+end
+
+-- ========== анімація перемикача ==========
+local TWEEN_ON  = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local TWEEN_OFF = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local function animateToggle(knob, track, on)
+    local targetPos = on and UDim2.new(1, -14, 0.5, -6) or UDim2.new(0, 2, 0.5, -6)
+    local targetColor = on and COL_FG or COL_DIM
+    local targetTrack = on and Color3.fromRGB(50, 50, 50) or Color3.fromRGB(10, 10, 10)
+    TweenService:Create(knob, on and TWEEN_ON or TWEEN_OFF, {
+        Position = targetPos,
+        BackgroundColor3 = targetColor,
+    }):Play()
+    TweenService:Create(track, on and TWEEN_ON or TWEEN_OFF, {
+        BackgroundColor3 = targetTrack,
+    }):Play()
+end
+
+-- ========== стан ==========
+local autoOn = false
+local suggestOn = false
+
+local function refreshAutoVisual()
+    animateToggle(autoKnob, autoTrack, autoOn)
+    autoLbl.Text = autoOn and "потужний авто ✓" or "потужний авто"
+end
+
+local function refreshSuggestVisual()
+    animateToggle(suggestKnob, suggestTrack, suggestOn)
+    suggestLbl.Text = suggestOn and "потужні підказки ✓" or "потужні підказки"
+end
+
+-- ========== http ==========
+local function httpRequest(options)
+    local reqFunc = (syn and syn.request)
+        or (http and http.request)
+        or (fluxus and fluxus.request)
+        or (krnl and krnl.request)
+        or request
+        or http_request
+    if not reqFunc then return nil, "нема http в екзекуторі" end
+    local ok, res = pcall(reqFunc, options)
+    if not ok then return nil, tostring(res) end
+    return res
+end
+
+-- ========== stockfish api ==========
+local STOCKFISH_URL = "https://stockfish.online/api/s/v2.php"
+
+local function getBestMoveFromStockfish(fen, depth)
+    depth = depth or 15
+    local encodedFen = HttpService:UrlEncode(fen)
+    local url = STOCKFISH_URL .. "?fen=" .. encodedFen .. "&depth=" .. tostring(depth)
+    local res, err = httpRequest({Url = url, Method = "GET"})
+    if not res then return nil, "http зламався: " .. tostring(err) end
+    if res.StatusCode ~= 200 then return nil, "статус " .. tostring(res.StatusCode) end
+    local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+    if not ok or not data then return nil, "json не читається" end
+    if data.success == false then return nil, "api каже ні" end
+    local move = data.bestmove
+    if not move or move == "" then return nil, "api не дав хід" end
+    local cleanMove = move:match("bestmove%s+(%S+)") or move:match("^(%S+)")
+    if cleanMove and cleanMove ~= "(none)" then return cleanMove end
+    return nil, "не можу розібрати хід"
+end
+
+-- ========== гра ==========
+local CPS, sunfish
+local ok
+ok, CPS = pcall(function() return require(player.PlayerScripts.Services.ChessProxyService) end)
+if not ok or not CPS then log("ChessProxyService зламався, потужно сумно") return end
+
+ok, sunfish = pcall(function() return require(player.PlayerScripts.AI.Sunfish) end)
+if not ok or not sunfish then log("Sunfish зламався, потужно сумно") return end
+
+local net = ReplicatedStorage.Packages.RbxUtil.Net
+local lastFen = nil
+local stockfishWorking = nil
+
+local function getGame()
+    local g = CPS.ChessGame
+    if not g or not g.Active then return nil end
+    return g
+end
+
+local function isMyTurn(g)
+    if not g or g.WhiteToPlay == nil or g.AmIWhite == nil then return false end
+    return g.WhiteToPlay == g.AmIWhite
+end
+
+local function submitMove(g, move)
+    local ev = net and net:FindFirstChild("SubmitMove_" .. tostring(g.GameID))
+    if ev and ev:IsA("RemoteEvent") then
+        local ok2 = pcall(function() ev:FireServer(move) end)
+        if ok2 then return true end
+    end
+    if g.Remotes and g.Remotes.SubmitMove then
+        local r = g.Remotes.SubmitMove
+        if r.ClassName == "RemoteEvent" then
+            local ok2 = pcall(function() r:FireServer(move) end)
+            if ok2 then return true end
+        end
+    end
+    return false
+end
+
+-- ========== підказка ==========
+local function findSquareFrame(boardGui, square)
+    if not boardGui then return nil end
+    for _, v in ipairs(boardGui:GetDescendants()) do
+        if (v:IsA("Frame") or v:IsA("TextButton") or v:IsA("ImageButton"))
+            and (v.Name == square or v.Name == square:upper() or v.Name == square:lower()) then
+            return v
+        end
+    end
+    return nil
+end
+
+local highlightCache = {}
+local function clearHighlights()
+    for _, h in ipairs(highlightCache) do
+        if h and h.Parent then h:Destroy() end
+    end
+    highlightCache = {}
+end
+
+local function makeHighlight(squareFrame, topColor, bottomColor, addDot)
+    if not squareFrame then return end
+    local overlay = Instance.new("Frame")
+    overlay.Size = UDim2.new(1, 0, 1, 0)
+    overlay.Position = UDim2.new(0, 0, 0, 0)
+    overlay.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    overlay.BackgroundTransparency = 0.45
+    overlay.BorderSizePixel = 0
+    overlay.ZIndex = 10
+    overlay.Parent = squareFrame
+
+    local grad = Instance.new("UIGradient")
+    grad.Rotation = 90
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0.0, topColor),
+        ColorSequenceKeypoint.new(1.0, bottomColor),
+    })
+    grad.Parent = overlay
+
+    if addDot then
+        local dot = Instance.new("Frame")
+        dot.Size = UDim2.new(0, 10, 0, 10)
+        dot.Position = UDim2.new(0.5, -5, 0.5, -5)
+        dot.BackgroundColor3 = COL_BLACK
+        dot.BackgroundTransparency = 0
+        dot.BorderSizePixel = 0
+        dot.ZIndex = 11
+        dot.Parent = overlay
+    end
+
+    table.insert(highlightCache, overlay)
+end
+
+local function showSuggestion(move)
+    clearHighlights()
+    local boardGui = playerGui:FindFirstChild("2DBoard")
+    if not boardGui then log("дошка не знайдена, потужно сумно") return end
+    local fromSq = string.sub(move, 1, 2)
+    local toSq   = string.sub(move, 3, 4)
+    local fromFrame = findSquareFrame(boardGui, fromSq)
+    local toFrame   = findSquareFrame(boardGui, toSq)
+
+    if fromFrame then
+        makeHighlight(fromFrame, Color3.fromRGB(255, 80, 80), COL_START, false)
+    end
+    if toFrame then
+        makeHighlight(toFrame, Color3.fromRGB(255, 190, 90), COL_DEST, true)
+    end
+
+    if fromFrame and toFrame then
+        log("бери " .. fromSq .. " і йди на " .. toSq .. " потужно")
+    else
+        log("хід " .. move .. " але клітинки не знайшов")
+    end
+end
+
+-- ========== цикл ==========
+local function autoLoop()
+    log("потужний авто включено")
+    while autoOn do
+        local g = getGame()
+        if g then
+            local fen = g.FEN
+            if fen and isMyTurn(g) and fen ~= lastFen then
+                lastFen = fen
+                local move, err
+                if stockfishWorking ~= false then
+                    move, err = getBestMoveFromStockfish(fen, 15)
+                    if move then
+                        stockfishWorking = true
+                        setEngine("stockfish")
+                    else
+                        log("stockfish зламався: " .. tostring(err))
+                        if stockfishWorking == nil then
+                            stockfishWorking = false
+                            setEngine("sunfish")
+                        end
+                    end
+                end
+                if not move then
+                    local ok2, sfMove = pcall(function()
+                        return sunfish:GetBestMoveFromFEN(fen, 5000)
+                    end)
+                    if ok2 and sfMove and sfMove ~= "" then
+                        move = tostring(sfMove)
+                        if stockfishWorking == false then setEngine("sunfish") end
+                    end
+                end
+                if move then
+                    if suggestOn then
+                        showSuggestion(move)
+                    else
+                        log("хід: " .. move .. " потужно")
+                        if submitMove(g, move) then
+                            task.wait(2)
+                        else
+                            task.wait(2)
+                        end
+                    end
+                else
+                    task.wait(2)
+                end
+            else
+                task.wait(0.3)
+            end
+        else
+            task.wait(1)
+        end
+    end
+    log("потужний авто виключено")
+end
+
+-- ========== кнопки ==========
+autoBtn.MouseButton1Click:Connect(function()
+    autoOn = not autoOn
+    refreshAutoVisual()
+    if autoOn then
+        task.spawn(autoLoop)
+    end
+end)
+
+suggestBtn.MouseButton1Click:Connect(function()
+    suggestOn = not suggestOn
+    refreshSuggestVisual()
+    if not suggestOn then clearHighlights() end
+end)
+
+-- ========== правий shift ==========
+local hidden = false
+local function setAllVisible(v)
+    autoBtn.Parent.Visible = v
+    suggestBtn.Parent.Visible = v
+    engineBtn.Parent.Visible = v
+    statusStrip.Visible = v
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        hidden = not hidden
+        setAllVisible(not hidden)
+    end
+end)
+
+-- ========== перевірка на старті ==========
+task.spawn(function()
+    local req = (syn and syn.request)
+        or (http and http.request)
+        or (fluxus and fluxus.request)
+        or (krnl and krnl.request)
+        or request
+        or http_request
+    if not req then
+        stockfishWorking = false
+        setEngine("sunfish")
+        log("http нема, тільки sunfish, але потужно")
+        return
+    end
+    local res, err = httpRequest({
+        Url = "https://stockfish.online/api/s/v2.php?fen=rnbqkbnr%2Fpppppppp%2F8%2F8%2F8%2F8%2FPPPPPPPP%2FRNBQKBNR%20w%20KQkq%20-%200%201&depth=8",
+        Method = "GET",
+    })
+    if res and res.StatusCode == 200 then
+        local okj, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+        if okj and data and data.success ~= false and data.bestmove then
+            stockfishWorking = true
+            setEngine("stockfish")
+            log("готово, потужно")
+            return
+        end
+    end
+    stockfishWorking = false
+    setEngine("sunfish")
+    log("stockfish не працює, sunfish теж потужно")
+end)
+
+refreshAutoVisual()
+refreshSuggestVisual()
