@@ -1,4 +1,4 @@
--- ========== CHESS HACK V29: STOCKFISH UI SWAP + PERFECT MINI BOARD ==========
+-- ========== CHESS HACK V30: STOCKFISH + ARROWS ==========
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
@@ -6,7 +6,7 @@ local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-for _, name in ipairs({"ChessHackV19", "ChessHackV20", "ChessHackV21", "ChessHackV22", "ChessHackV23", "ChessHackV24", "ChessHackV25", "ChessHackV26", "ChessHackV27", "ChessHackV28", "ChessHackV29", "RoblyHighlights", "HumanTimerGui", "HiddenBoardGui", "MoveAssist"}) do
+for _, name in ipairs({"ChessHackV19", "ChessHackV20", "ChessHackV21", "ChessHackV22", "ChessHackV23", "ChessHackV24", "ChessHackV25", "ChessHackV26", "ChessHackV27", "ChessHackV28", "ChessHackV29", "ChessHackV30", "RoblyHighlights", "HumanTimerGui", "HiddenBoardGui", "MoveAssist"}) do
     local old = playerGui:FindFirstChild(name)
     if old then old:Destroy() end
 end
@@ -19,7 +19,9 @@ local highlightTransparency = 0.5
 local fromColor = Color3.fromRGB(255, 50, 50)
 local toColor = Color3.fromRGB(50, 50, 255)
 local currentOverlays = {}
+local currentArrows = {}
 local enableHighlight = true
+local enableArrows = true
 local enableAutoPlay = false
 local enableHumanMode = false
 local enableShowTimer = true
@@ -530,17 +532,73 @@ local function squareName(idx) return string.char(97 + fileOf(idx)) .. tostring(
 local PROMO_TYPE_ID = { Q = 5, R = 4, B = 3, N = 2 }
 local function toGameSquare(idx) return mirrorW(idx) + 1 end
 
--- ========== HIGHLIGHTS ==========
+-- ========== HIGHLIGHTS & ARROWS ==========
 local highlightGui = Instance.new("ScreenGui")
 highlightGui.Name = "RoblyHighlights"
 highlightGui.ResetOnSpawn = false
 highlightGui.DisplayOrder = 999
 highlightGui.Parent = playerGui
 
+local function drawArrow(guiParent, fromPos, toPos, fromSize, toSize, color, trans)
+    local fromCenter = fromPos + fromSize / 2
+    local toCenter = toPos + toSize / 2
+    
+    local diff = toCenter - fromCenter
+    local length = diff.Magnitude
+    if length < 1 then return end
+    
+    local angle = math.deg(math.atan2(diff.Y, diff.X))
+    
+    local arrowContainer = Instance.new("Frame")
+    arrowContainer.Size = UDim2.new(0, 0, 0, 0)
+    arrowContainer.Position = UDim2.new(0, fromCenter.X, 0, fromCenter.Y)
+    arrowContainer.BackgroundTransparency = 1
+    arrowContainer.ZIndex = 10
+    arrowContainer.Parent = guiParent
+    table.insert(currentArrows, arrowContainer)
+    
+    local shaftLength = length * 0.75
+    local shaft = Instance.new("Frame")
+    shaft.Size = UDim2.new(0, shaftLength, 0, math.max(4, fromSize.X * 0.15))
+    shaft.Position = UDim2.new(0, 0, 0.5, -shaft.AbsoluteSize.Y / 2)
+    shaft.AnchorPoint = Vector2.new(0, 0.5)
+    shaft.BackgroundColor3 = color
+    shaft.BackgroundTransparency = trans
+    shaft.BorderSizePixel = 0
+    shaft.ZIndex = 10
+    shaft.Parent = arrowContainer
+    
+    local headSize = math.max(10, fromSize.X * 0.3)
+    local head = Instance.new("Frame")
+    head.Size = UDim2.new(0, headSize, 0, headSize)
+    head.Position = UDim2.new(0, shaftLength, 0.5, 0)
+    head.AnchorPoint = Vector2.new(0.5, 0.5)
+    head.BackgroundColor3 = color
+    head.BackgroundTransparency = trans
+    head.BorderSizePixel = 0
+    head.ZIndex = 10
+    head.Rotation = 45
+    head.Parent = arrowContainer
+    
+    arrowContainer.Rotation = angle
+end
+
 local function drawHighlight(board, m)
     for _, obj in ipairs(currentOverlays) do obj:Destroy() end
+    for _, obj in ipairs(currentArrows) do obj:Destroy() end
     currentOverlays = {}
+    currentArrows = {}
     if not board or not m or not enableHighlight then return end
+    
+    local function getFramePosSize(idx)
+        local fr = indexToSquareFrame(board, idx)
+        if not fr then return nil, nil end
+        return fr.AbsolutePosition, fr.AbsoluteSize
+    end
+    
+    local fromPos, fromSize = getFramePosSize(m.from)
+    local toPos, toSize = getFramePosSize(m.to)
+    
     local function drawSquare(idx, color, isFrom, isTo)
         local fr = indexToSquareFrame(board, idx)
         if not fr then return end
@@ -551,14 +609,19 @@ local function drawHighlight(board, m)
         hint.BackgroundColor3 = color
         hint.BackgroundTransparency = highlightTransparency
         hint.BorderSizePixel = 0
-        hint.ZIndex = 10
+        hint.ZIndex = 9
         hint:SetAttribute("IsFrom", isFrom)
         hint:SetAttribute("IsTo", isTo)
         hint.Parent = highlightGui
         table.insert(currentOverlays, hint)
     end
+    
     drawSquare(m.from, fromColor, true, false)
     drawSquare(m.to, toColor, false, true)
+    
+    if enableArrows and fromPos and toPos then
+        drawArrow(highlightGui, fromPos, toPos, fromSize, toSize, toColor, highlightTransparency)
+    end
 end
 
 local function redrawVisuals()
@@ -569,9 +632,19 @@ local function redrawVisuals()
             elseif obj:GetAttribute("IsTo") then obj.BackgroundColor3 = toColor end
         end
     end
+    for _, obj in pairs(currentArrows) do
+        if obj and obj.Parent then
+            for _, child in ipairs(obj:GetChildren()) do
+                if child:IsA("Frame") then
+                    child.BackgroundTransparency = highlightTransparency
+                    child.BackgroundColor3 = toColor
+                end
+            end
+        end
+    end
 end
 
--- ========== HIDDEN BOARD (PERFECT GRID) ==========
+-- ========== HIDDEN BOARD ==========
 local hiddenGui = Instance.new("ScreenGui")
 hiddenGui.Name = "HiddenBoardGui"
 hiddenGui.ResetOnSpawn = false
@@ -606,6 +679,7 @@ miniGridLayout.SortOrder = Enum.SortOrder.LayoutOrder
 miniGridLayout.Parent = miniGrid
 
 local miniOverlays = {}
+local miniArrows = {}
 local miniSquareFrames = {}
 
 for r = 1, 8 do
@@ -622,28 +696,89 @@ end
 
 local function drawMiniHighlight(m)
     for _, obj in ipairs(miniOverlays) do obj:Destroy() end
+    for _, obj in ipairs(miniArrows) do obj:Destroy() end
     miniOverlays = {}
+    miniArrows = {}
     if not m then return end
     
-    local function highlightSquare(idx, color)
+    local function highlightSquare(idx, color, isFrom, isTo)
         local r = math.floor(idx / 8) + 1
         local c = (idx % 8) + 1
         local sqFrame = miniSquareFrames[r] and miniSquareFrames[r][c]
-        
         if sqFrame then
             local h = Instance.new("Frame")
             h.Size = UDim2.new(1, 0, 1, 0)
             h.BackgroundColor3 = color
             h.BackgroundTransparency = highlightTransparency
             h.BorderSizePixel = 0
-            h.ZIndex = 5
+            h.ZIndex = 9
+            h:SetAttribute("IsFrom", isFrom)
+            h:SetAttribute("IsTo", isTo)
             h.Parent = sqFrame
             table.insert(miniOverlays, h)
         end
     end
     
-    highlightSquare(m.from, fromColor)
-    highlightSquare(m.to, toColor)
+    highlightSquare(m.from, fromColor, true, false)
+    highlightSquare(m.to, toColor, false, true)
+    
+    if enableArrows then
+        local fromR = math.floor(m.from / 8) + 1
+        local fromC = (m.from % 8) + 1
+        local toR = math.floor(m.to / 8) + 1
+        local toC = (m.to % 8) + 1
+        
+        local fromFrame = miniSquareFrames[fromR] and miniSquareFrames[fromR][fromC]
+        local toFrame = miniSquareFrames[toR] and miniSquareFrames[toR][toC]
+        
+        if fromFrame and toFrame then
+            local fPos = fromFrame.AbsolutePosition
+            local fSize = fromFrame.AbsoluteSize
+            local tPos = toFrame.AbsolutePosition
+            local tSize = toFrame.AbsoluteSize
+            
+            local fromCenter = fPos + fSize / 2
+            local toCenter = tPos + tSize / 2
+            
+            local diff = toCenter - fromCenter
+            local length = diff.Magnitude
+            if length > 1 then
+                local angle = math.deg(math.atan2(diff.Y, diff.X))
+                local arrowContainer = Instance.new("Frame")
+                arrowContainer.Size = UDim2.new(0, 0, 0, 0)
+                arrowContainer.Position = UDim2.new(0, fromCenter.X, 0, fromCenter.Y)
+                arrowContainer.BackgroundTransparency = 1
+                arrowContainer.ZIndex = 10
+                arrowContainer.Parent = hiddenGui
+                table.insert(miniArrows, arrowContainer)
+                
+                local shaftLength = length * 0.75
+                local shaft = Instance.new("Frame")
+                shaft.Size = UDim2.new(0, shaftLength, 0, math.max(2, fSize.X * 0.15))
+                shaft.Position = UDim2.new(0, 0, 0.5, 0)
+                shaft.AnchorPoint = Vector2.new(0, 0.5)
+                shaft.BackgroundColor3 = toColor
+                shaft.BackgroundTransparency = highlightTransparency
+                shaft.BorderSizePixel = 0
+                shaft.ZIndex = 10
+                shaft.Parent = arrowContainer
+                
+                local headSize = math.max(6, fSize.X * 0.3)
+                local head = Instance.new("Frame")
+                head.Size = UDim2.new(0, headSize, 0, headSize)
+                head.Position = UDim2.new(0, shaftLength, 0.5, 0)
+                head.AnchorPoint = Vector2.new(0.5, 0.5)
+                head.BackgroundColor3 = toColor
+                head.BackgroundTransparency = highlightTransparency
+                head.BorderSizePixel = 0
+                head.ZIndex = 10
+                head.Rotation = 45
+                head.Parent = arrowContainer
+                
+                arrowContainer.Rotation = angle
+            end
+        end
+    end
 end
 
 local mbDragging = false
@@ -693,13 +828,13 @@ timerText.Parent = timerFrame
 
 -- ========== MAIN UI ==========
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "ChessHackV29"
+screenGui.Name = "ChessHackV30"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 210, 0, 560)
-mainFrame.Position = UDim2.new(0.25, -105, 0.5, -280)
+mainFrame.Size = UDim2.new(0, 210, 0, 580)
+mainFrame.Position = UDim2.new(0.25, -105, 0.5, -290)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 mainFrame.BackgroundTransparency = 0.05
 mainFrame.BorderSizePixel = 0
@@ -720,7 +855,7 @@ local titleText = Instance.new("TextLabel")
 titleText.Size = UDim2.new(1, -30, 1, 0)
 titleText.Position = UDim2.new(0, 10, 0, 0)
 titleText.BackgroundTransparency = 1
-titleText.Text = "STOCKFISH v29"
+titleText.Text = "STOCKFISH v30"
 titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleText.Font = Enum.Font.GothamBold
 titleText.TextSize = 12
@@ -785,8 +920,8 @@ statusLabel.TextXAlignment = Enum.TextXAlignment.Right
 statusLabel.Parent = infoPanel
 
 local bottomArea = Instance.new("Frame")
-bottomArea.Size = UDim2.new(1, 0, 0, 180)
-bottomArea.Position = UDim2.new(0, 0, 1, -180)
+bottomArea.Size = UDim2.new(1, 0, 0, 200)
+bottomArea.Position = UDim2.new(0, 0, 1, -200)
 bottomArea.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 bottomArea.BorderSizePixel = 0
 bottomArea.Parent = mainFrame
@@ -831,25 +966,37 @@ createToggleRow("Highlight Squares", 8, true, function(v)
     enableHighlight = v
     if not v then
         for _, obj in ipairs(currentOverlays) do obj:Destroy() end
+        for _, obj in ipairs(currentArrows) do obj:Destroy() end
         currentOverlays = {}
+        currentArrows = {}
         for _, obj in ipairs(miniOverlays) do obj:Destroy() end
+        for _, obj in ipairs(miniArrows) do obj:Destroy() end
         miniOverlays = {}
+        miniArrows = {}
     end
 end)
-createToggleRow("Auto Play", 32, false, function(v) enableAutoPlay = v end)
-createToggleRow("Human Mode", 56, false, function(v) enableHumanMode = v end)
-createToggleRow("Show Timer", 80, true, function(v)
+
+createToggleRow("Show Arrows", 32, true, function(v)
+    enableArrows = v
+    if lastBestMove then
+        if enableHiddenBoard then drawMiniHighlight(lastBestMove) else redrawVisuals() end
+    end
+end)
+
+createToggleRow("Auto Play", 56, false, function(v) enableAutoPlay = v end)
+createToggleRow("Human Mode", 80, false, function(v) enableHumanMode = v end)
+createToggleRow("Show Timer", 104, true, function(v)
     enableShowTimer = v
     if not v then timerFrame.Visible = false end
 end)
-createToggleRow("Hidden Board", 104, false, function(v)
+createToggleRow("Hidden Board", 128, false, function(v)
     enableHiddenBoard = v
     miniBoard.Visible = v
 end)
 
 local startBtn = Instance.new("TextButton")
 startBtn.Size = UDim2.new(1, -16, 0, 28)
-startBtn.Position = UDim2.new(0, 8, 0, 132)
+startBtn.Position = UDim2.new(0, 8, 0, 152)
 startBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 startBtn.Text = "Start Hack"
 startBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -861,7 +1008,7 @@ Instance.new("UIStroke", startBtn).Color = Color3.fromRGB(80, 80, 80)
 
 local resyncBtn = Instance.new("TextButton")
 resyncBtn.Size = UDim2.new(1, -16, 0, 20)
-resyncBtn.Position = UDim2.new(0, 8, 0, 160)
+resyncBtn.Position = UDim2.new(0, 8, 0, 180)
 resyncBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 resyncBtn.Text = "Resync Board"
 resyncBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -871,7 +1018,7 @@ resyncBtn.Parent = bottomArea
 Instance.new("UICorner", resyncBtn).CornerRadius = UDim.new(0, 4)
 
 local scrollFrame = Instance.new("ScrollingFrame")
-scrollFrame.Size = UDim2.new(1, 0, 1, -240)
+scrollFrame.Size = UDim2.new(1, 0, 1, -260)
 scrollFrame.Position = UDim2.new(0, 0, 0, 66)
 scrollFrame.BackgroundTransparency = 1
 scrollFrame.ScrollBarThickness = 2
@@ -1359,11 +1506,15 @@ task.spawn(function()
                 else
                     if #currentOverlays > 0 and enableHighlight then
                         for _, obj in ipairs(currentOverlays) do obj:Destroy() end
+                        for _, obj in ipairs(currentArrows) do obj:Destroy() end
                         currentOverlays = {}
+                        currentArrows = {}
                     end
                     if #miniOverlays > 0 and enableHiddenBoard then
                         for _, obj in ipairs(miniOverlays) do obj:Destroy() end
+                        for _, obj in ipairs(miniArrows) do obj:Destroy() end
                         miniOverlays = {}
+                        miniArrows = {}
                     end
                 end
             end
@@ -1385,9 +1536,13 @@ startBtn.MouseButton1Click:Connect(function()
         startBtn.Text = "Start Hack"
         startBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
         for _, obj in ipairs(currentOverlays) do obj:Destroy() end
+        for _, obj in ipairs(currentArrows) do obj:Destroy() end
         currentOverlays = {}
+        currentArrows = {}
         for _, obj in ipairs(miniOverlays) do obj:Destroy() end
+        for _, obj in ipairs(miniArrows) do obj:Destroy() end
         miniOverlays = {}
+        miniArrows = {}
         Bot.state = nil
         Bot.lastPly = -1
         Bot.turnStartTime = 0
@@ -1424,7 +1579,7 @@ closeBtn.MouseButton1Click:Connect(function()
     scrollFrame.Visible = not scrollFrame.Visible
     infoPanel.Visible = scrollFrame.Visible
     bottomArea.Visible = scrollFrame.Visible
-    mainFrame.Size = scrollFrame.Visible and UDim2.new(0, 210, 0, 560) or UDim2.new(0, 210, 0, 28)
+    mainFrame.Size = scrollFrame.Visible and UDim2.new(0, 210, 0, 580) or UDim2.new(0, 210, 0, 28)
 end)
 
 -- ========== STOCKFISH STARTUP CHECK ==========
