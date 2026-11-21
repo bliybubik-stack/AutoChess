@@ -1,797 +1,1458 @@
--- ========== RoChess Auto V2: потужно українською ==========
+-- ========== CHESS HACK V28: STOCKFISH UI SWAP + TURN GATE ==========
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-for _, name in ipairs({"RoChessAutoV2", "RoChessAutoV1", "ChessAutoV11", "ChessAutoV10", "ChessAutoV9"}) do
+for _, name in ipairs({"ChessHackV19", "ChessHackV20", "ChessHackV21", "ChessHackV22", "ChessHackV23", "ChessHackV24", "ChessHackV25", "ChessHackV26", "ChessHackV27", "ChessHackV28", "RoblyHighlights", "HumanTimerGui", "HiddenBoardGui", "MoveAssist"}) do
     local old = playerGui:FindFirstChild(name)
     if old then old:Destroy() end
 end
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "RoChessAutoV2"
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 999
-screenGui.Parent = playerGui
+-- ========== STATE ==========
+local isHackRunning = false
+local currentDepth = 3
+local currentNodeCap = 150000
+local highlightTransparency = 0.5
+local fromColor = Color3.fromRGB(255, 50, 50)
+local toColor = Color3.fromRGB(50, 50, 255)
+local currentOverlays = {}
+local enableHighlight = true
+local enableAutoPlay = false
+local enableHumanMode = false
+local enableShowTimer = true
+local enableHiddenBoard = false
+local hiddenBoardSize = 250
+local isCalculating = false
+local isTimerRunning = false
+local calculationToken = 0
+local timerEndTime = 0
+local lastBestMove = nil
+local useVortexFallback = true
 
--- ========== кольори ==========
-local COL_FG        = Color3.fromRGB(235, 235, 235)
-local COL_DIM       = Color3.fromRGB(120, 120, 120)
-local COL_SHADOW    = Color3.fromRGB(0, 0, 0)
-local COL_BLACK     = Color3.fromRGB(0, 0, 0)
-local COL_UA_BLUE   = Color3.fromRGB(0, 87, 183)
-local COL_UA_YELLOW = Color3.fromRGB(255, 215, 0)
-local COL_HINT      = Color3.fromRGB(95, 175, 255)
-local FONT = Enum.Font.GothamBold
+-- ========== STOCKFISH STATE ==========
+local stockfishDepth = 12
+local stockfishSkill = 20    -- 0..20 (stockfish.online поддерживает skillLevel)
+local stockfishMoveTime = 1000 -- ms, для API мы отправляем depth но сохраняем для UI
+local stockfishWorking = nil
+local stockfishLastError = ""
 
-local function addTextStroke(label)
-    local s = Instance.new("UIStroke")
-    s.Thickness = 2.5
-    s.Color = COL_BLACK
-    s.Transparency = 0.65
-    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual
-    s.Parent = label
-    return s
+-- ========== THINK GATE ==========
+-- Мы думаем ТОЛЬКО когда сходил противник.
+-- lastThinkPly = кол-во ucis на момент, когда мы в последний раз инициировали thinking.
+-- Когда #ucis == lastThinkPly — уже думали/сходили, не надо повторять.
+local lastThinkPly = -1
+
+-- ========== APP ==========
+local App
+do
+    local ok, mod = pcall(require, ReplicatedStorage:WaitForChild("ChessClient"):WaitForChild("App"))
+    if ok and type(mod) == "table" then App = mod end
 end
 
-local function addUkrainianOutline(btn)
-    local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 2
-    stroke.Color = Color3.fromRGB(255, 255, 255)
-    stroke.Transparency = 0
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    local grad = Instance.new("UIGradient")
-    grad.Rotation = 90
-    grad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0.0, COL_UA_BLUE),
-        ColorSequenceKeypoint.new(0.5, COL_UA_BLUE),
-        ColorSequenceKeypoint.new(1.0, COL_UA_YELLOW),
-    })
-    grad.Parent = stroke
-    stroke.Parent = btn
+local VortexBot, BoardHelper
+do
+    local ok1, vb = pcall(require, ReplicatedStorage:WaitForChild("Chess"):WaitForChild("VortexBot"))
+    if ok1 and type(vb) == "table" then VortexBot = vb end
+    local ok2, bh = pcall(require, ReplicatedStorage:WaitForChild("Chess"):WaitForChild("Engine"))
+    if ok2 and type(bh) == "table" then BoardHelper = bh end
 end
 
-local function makeButton(parent, size, position, labelText)
-    local wrap = Instance.new("Frame")
-    wrap.Size = UDim2.new(size.X.Scale, size.X.Offset, size.Y.Scale, size.Y.Offset + 6)
-    wrap.Position = position
-    wrap.BackgroundTransparency = 1
-    wrap.BorderSizePixel = 0
-    wrap.Parent = parent
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 1, -6)
-    btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    btn.BackgroundTransparency = 0.3
-    btn.BorderSizePixel = 0
-    btn.Text = ""
-    btn.AutoButtonColor = false
-    btn.Parent = wrap
-
-    local grad = Instance.new("UIGradient")
-    grad.Rotation = 90
-    grad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0.0, Color3.fromRGB(90, 90, 90)),
-        ColorSequenceKeypoint.new(1.0, Color3.fromRGB(20, 20, 20)),
-    })
-    grad.Parent = btn
-
-    addUkrainianOutline(btn)
-
-    local shadow = Instance.new("Frame")
-    shadow.Size = UDim2.new(1, 0, 0, 5)
-    shadow.Position = UDim2.new(0, 0, 1, -6)
-    shadow.BackgroundColor3 = COL_SHADOW
-    shadow.BackgroundTransparency = 0.2
-    shadow.BorderSizePixel = 0
-    shadow.ZIndex = 0
-    shadow.Parent = wrap
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(0.7, -8, 1, 0)
-    lbl.Position = UDim2.new(0, 8, 0, 0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = labelText
-    lbl.TextColor3 = COL_FG
-    lbl.Font = FONT
-    lbl.TextSize = 14
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 2
-    lbl.Parent = btn
-    addTextStroke(lbl)
-
-    local track = Instance.new("Frame")
-    track.Size = UDim2.new(0, 30, 0, 16)
-    track.Position = UDim2.new(1, -38, 0.5, -8)
-    track.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
-    track.BorderSizePixel = 0
-    track.ZIndex = 2
-    track.Parent = btn
-    local trStroke = Instance.new("UIStroke")
-    trStroke.Thickness = 1
-    trStroke.Color = COL_DIM
-    trStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    trStroke.Parent = track
-
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 12, 0, 12)
-    knob.Position = UDim2.new(0, 2, 0.5, -6)
-    knob.BackgroundColor3 = COL_DIM
-    knob.BorderSizePixel = 0
-    knob.ZIndex = 3
-    knob.Parent = track
-
-    return btn, lbl, track, knob
-end
-
--- ========== панель ==========
-local barWidth = 490
-local barY = -80
-local barX = -barWidth / 2
-
-local autoBtn, autoLbl, autoTrack, autoKnob = makeButton(
-    screenGui,
-    UDim2.new(0, 170, 0, 40),
-    UDim2.new(0.5, barX, 1, barY),
-    "потужний авто"
-)
-local suggestBtn, suggestLbl, suggestTrack, suggestKnob = makeButton(
-    screenGui,
-    UDim2.new(0, 180, 0, 40),
-    UDim2.new(0.5, barX + 178, 1, barY),
-    "потужні підказки"
-)
-local engineBtn, engineLbl, engineTrack, engineKnob = makeButton(
-    screenGui,
-    UDim2.new(0, 130, 0, 40),
-    UDim2.new(0.5, barX + 366, 1, barY),
-    "мозок"
-)
-engineTrack.Visible = false
-engineLbl.Size = UDim2.new(1, -16, 1, 0)
-engineLbl.Position = UDim2.new(0, 8, 0, 0)
-engineLbl.TextXAlignment = Enum.TextXAlignment.Center
-engineLbl.Text = "шукаю..."
-
-local statusStrip = Instance.new("TextLabel")
-statusStrip.Size = UDim2.new(0, barWidth + 40, 0, 14)
-statusStrip.Position = UDim2.new(0.5, -(barWidth + 40) / 2, 1, barY + 46)
-statusStrip.BackgroundTransparency = 1
-statusStrip.Text = ""
-statusStrip.TextColor3 = COL_DIM
-statusStrip.Font = FONT
-statusStrip.TextSize = 10
-statusStrip.TextXAlignment = Enum.TextXAlignment.Center
-statusStrip.Parent = screenGui
-addTextStroke(statusStrip)
-
-local function log(msg)
-    statusStrip.Text = tostring(msg):lower()
-    print("[потужно] " .. tostring(msg))
-end
-
-local function setEngine(name)
-    engineLbl.Text = tostring(name):lower()
-    engineLbl.TextColor3 = (name:lower():find("vortex")) and COL_FG or COL_DIM
-end
-
-local TWEEN_ON  = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-local TWEEN_OFF = TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
-local function animateToggle(knob, track, on)
-    local targetPos = on and UDim2.new(1, -14, 0.5, -6) or UDim2.new(0, 2, 0.5, -6)
-    TweenService:Create(knob, on and TWEEN_ON or TWEEN_OFF, {
-        Position = targetPos,
-        BackgroundColor3 = on and COL_FG or COL_DIM,
-    }):Play()
-    TweenService:Create(track, on and TWEEN_ON or TWEEN_OFF, {
-        BackgroundColor3 = on and Color3.fromRGB(50, 50, 50) or Color3.fromRGB(10, 10, 10),
-    }):Play()
-end
-
--- ========== RoChess state ==========
-local state = {
-    controller = nil,
-    lastScan = 0,
-    scanError = nil,
-    autoPlay = false,
-    autoHighlight = false,
-    useVortex = true,
-    brilliantMode = true,
-    brilliantTolerance = 90,
-    searchTime = 1,
-    depth = 12,
-    playDelay = 0.35,
-    analysisBusy = false,
-    analysisToken = 0,
-    workerRunning = false,
-    destroyed = false,
-    lastAutoFen = nil,
-    lastHighlightFen = nil,
-    best = nil,
+-- ========== LOCAL ENGINE (unchanged) ==========
+local VALUES = { P = 100, N = 320, B = 330, R = 500, Q = 900, K = 0 }
+local PST = {
+    P = { 0,0,0,0,0,0,0,0, 50,50,50,50,50,50,50,50, 10,10,20,30,30,20,10,10, 5,5,10,25,25,10,5,5, 0,0,0,20,20,0,0,0, 5,-5,-10,0,0,-10,-5,5, 5,10,10,-20,-20,10,10,5, 0,0,0,0,0,0,0,0 },
+    N = { -50,-40,-30,-30,-30,-30,-40,-50, -40,-20,0,0,0,0,-20,-40, -30,0,10,15,15,10,0,-30, -30,5,15,20,20,15,5,-30, -30,0,15,20,20,15,0,-30, -30,5,10,15,15,10,5,-30, -40,-20,0,5,5,0,-20,-40, -50,-40,-30,-30,-30,-30,-40,-50 },
+    B = { -20,-10,-10,-10,-10,-10,-10,-20, -10,0,0,0,0,0,0,-10, -10,0,5,10,10,5,0,-10, -10,5,5,10,10,5,5,-10, -10,0,10,10,10,10,0,-10, -10,10,10,10,10,10,10,-10, -10,5,0,0,0,0,5,-10, -20,-10,-10,-10,-10,-10,-10,-20 },
+    R = { 0,0,0,0,0,0,0,0, 5,10,10,10,10,10,10,5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, -5,0,0,0,0,0,0,-5, 0,0,0,5,5,0,0,0 },
+    Q = { -20,-10,-10,-5,-5,-10,-10,-20, -10,0,0,0,0,0,0,-10, -10,0,5,5,5,5,0,-10, -5,0,5,5,5,5,0,-5, 0,0,5,5,5,5,0,-5, -10,5,5,5,5,5,0,-10, -10,0,5,0,0,0,0,-10, -20,-10,-10,-5,-5,-10,-10,-20 },
+    K = { -30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -20,-30,-30,-40,-40,-30,-30,-20, -10,-20,-20,-20,-20,-20,-20,-10, 20,20,0,0,0,0,20,20, 20,30,10,0,0,10,30,20 }
 }
+local KNIGHT_D = { {1,2},{2,1},{2,-1},{1,-2},{-1,-2},{-2,-1},{-2,1},{-1,2} }
+local KING_D = { {1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1},{0,-1},{1,-1} }
+local BISHOP_D = { {1,1},{1,-1},{-1,1},{-1,-1} }
+local ROOK_D = { {1,0},{-1,0},{0,1},{0,-1} }
 
-local autoOn = false
-local suggestOn = false
+local function fileOf(i) return i % 8 end
+local function rankOf(i) return math.floor(i / 8) end
+local function sq(f, r) return r * 8 + f end
+local function isWhitePiece(p) return p ~= nil and p ~= "" and p:upper() == p end
+local function colorOf(p) return isWhitePiece(p) and "w" or "b" end
+local function enemySide(c) return c == "w" and "b" or "w" end
 
-local function refreshAutoVisual()
-    animateToggle(autoKnob, autoTrack, autoOn)
-    autoLbl.Text = autoOn and "потужний авто" or "потужний авто"
-end
+local Engine = {}
+function Engine.NewState() return { b = {}, side = "w", castling = "KQkq", ep = -1 } end
 
-local function refreshSuggestVisual()
-    animateToggle(suggestKnob, suggestTrack, suggestOn)
-    suggestLbl.Text = suggestOn and "потужні підказки" or "потужні підказки"
-end
-
--- ========== load RoChess modules ==========
-local Chess = ReplicatedStorage:WaitForChild("Chess", 15)
-if not Chess then
-    log("rochess не знайдено, потужно сумно")
-    return
-end
-
-local Engine, Bot, Openings, VortexBot
-local okE, eE = pcall(function() return require(Chess:WaitForChild("Engine")) end)
-if not okE or not eE then log("engine зламався: " .. tostring(eE)) return end
-Engine = eE
-
-local okB, eB = pcall(function() return require(Chess:WaitForChild("Bot")) end)
-if not okB or not eB then log("bot зламався: " .. tostring(eB)) return end
-Bot = eB
-
-pcall(function() Openings = require(Chess:WaitForChild("Openings")) end)
-pcall(function() VortexBot = require(Chess:WaitForChild("VortexBot")) end)
-
-local PROMOTION_TYPES = { q = 5, r = 4, b = 3, n = 2 }
-
--- ========== helpers ==========
-local function formatEvaluation(result)
-    local mate = tonumber(result and result.mate)
-    if mate and mate ~= 0 then return "mate in " .. tostring(mate) end
-    local score = tonumber(result and result.score)
-    if not score then return "?" end
-    if math.abs(score) >= 29000 then
-        return score > 0 and "білі виграють" or "чорні виграють"
-    end
-    return string.format("%+.2f", score / 100)
-end
-
-local function getUpvalueValues(fn)
-    local values = {}
-    if type(debug) == "table" and type(debug.getupvalues) == "function" then
-        local ok, result = pcall(debug.getupvalues, fn)
-        if ok and type(result) == "table" then
-            for _, value in pairs(result) do table.insert(values, value) end
+function Engine.IsAttacked(st, target, bySide)
+    local b = st.b; local tf, tr = fileOf(target), rankOf(target)
+    local pr = bySide == "w" and (tr + 1) or (tr - 1)
+    if pr >= 0 and pr < 8 then
+        for _, df in ipairs({ -1, 1 }) do
+            local nf = tf + df
+            if nf >= 0 and nf < 8 and b[sq(nf, pr)] == (bySide == "w" and "P" or "p") then return true end
         end
     end
-    if #values == 0 and type(debug) == "table" and type(debug.getupvalue) == "function" then
-        for index = 1, 60 do
-            local ok, nameOrValue, value = pcall(debug.getupvalue, fn, index)
-            if not ok or nameOrValue == nil then break end
-            if value ~= nil then table.insert(values, value) else table.insert(values, nameOrValue) end
-        end
+    for _, d in ipairs(KNIGHT_D) do
+        local nf, nr = tf + d[1], tr + d[2]
+        if nf >= 0 and nf < 8 and nr >= 0 and nr < 8 and b[sq(nf, nr)] == (bySide == "w" and "N" or "n") then return true end
     end
-    return values
-end
-
-local function isController(value)
-    if type(value) ~= "table" then return false end
-    local board = value.board
-    if type(board) ~= "table" then return false end
-    if type(value.render) ~= "function" or type(value.onBoardMove) ~= "function" or type(value.setSession) ~= "function" then
-        return false
+    for _, d in ipairs(KING_D) do
+        local nf, nr = tf + d[1], tr + d[2]
+        if nf >= 0 and nf < 8 and nr >= 0 and nr < 8 and b[sq(nf, nr)] == (bySide == "w" and "K" or "k") then return true end
     end
-    local ok, methodsExist = pcall(function()
-        return type(board.setTint) == "function" and type(board.setArrow) == "function"
-    end)
-    return ok and methodsExist
-end
-
-local function findController(force)
-    if state.controller and isController(state.controller) then return state.controller end
-    if not force and os.clock() - state.lastScan < 2 then return nil end
-    state.lastScan = os.clock()
-    state.controller = nil
-    state.scanError = nil
-    if type(getgc) ~= "function" then
-        state.scanError = "екзекутор без getgc, потужно сумно"
-        return nil
-    end
-    local ok, objects = pcall(getgc, true)
-    if not ok or type(objects) ~= "table" then ok, objects = pcall(getgc) end
-    if not ok or type(objects) ~= "table" then
-        state.scanError = "не можу сканувати гру"
-        return nil
-    end
-    for _, object in pairs(objects) do
-        if isController(object) then state.controller = object; return object end
-    end
-    for _, object in pairs(objects) do
-        if type(object) == "function" then
-            for _, upvalue in ipairs(getUpvalueValues(object)) do
-                if isController(upvalue) then state.controller = upvalue; return upvalue end
+    for _, d in ipairs(BISHOP_D) do
+        local nf, nr = tf + d[1], tr + d[2]
+        while nf >= 0 and nf < 8 and nr >= 0 and nr < 8 do
+            local p = b[sq(nf, nr)]
+            if p ~= "" then
+                if colorOf(p) == bySide then local u = p:upper(); if u == "B" or u == "Q" then return true end end
+                break
             end
+            nf = nf + d[1]; nr = nr + d[2]
         end
     end
-    state.scanError = "дошку не знайдено, потужно сумно"
-    return nil
-end
-
-local function getPosition(app)
-    if not app then return nil, nil, state.scanError or "нема контролера" end
-    local session = app.session
-    if type(session) ~= "table" then return nil, nil, "нема активної гри" end
-    if type(session.engine) ~= "table" or type(session.engine.getFen) ~= "function" then
-        return session, nil, "сесія без позиції"
-    end
-    local ok, fen = pcall(function() return session.engine:getFen() end)
-    if not ok or type(fen) ~= "string" or fen == "" then
-        return session, nil, "не читаю позицію"
-    end
-    return session, fen, nil
-end
-
-local function currentFen(session)
-    if not session or type(session.engine) ~= "table" then return nil end
-    local ok, fen = pcall(function() return session.engine:getFen() end)
-    if ok and type(fen) == "string" then return fen end
-    return nil
-end
-
-local function isMyTurn(session)
-    if not session then return false end
-    if type(session.isMyTurn) == "function" then
-        local ok, result = pcall(function() return session:isMyTurn() end)
-        if ok and type(result) == "boolean" then return result end
-    end
-    local fen = currentFen(session)
-    local side = fen and string.match(fen, "^[^ ]+%s+([wb])")
-    local sideValue = side == "w" and 1 or side == "b" and -1 or nil
-    return sideValue ~= nil and session.myColor ~= nil and sideValue == session.myColor
-end
-
-local function moveBlockReason(session, requireAutoPermission)
-    if not session then return "нема сесії" end
-    if session.over then return "гра закінчилась" end
-    if session.pz then
-        if session.pz.busy then return "puzzle обробляється" end
-        if session.pz.done then return "puzzle закінчено" end
-        if session.pz.wrong then return "puzzle неправильний хід" end
-    end
-    if type(session.ucis) == "table" and type(session.viewPly) == "number" and session.viewPly < #session.ucis then
-        return "повернись до живої позиції"
-    end
-    if not isMyTurn(session) then return "не твій хід" end
-    if session.kind == "puzzle" and requireAutoPermission then return "puzzle вимкнено" end
-    return nil
-end
-
-local function clearHighlights(app)
-    app = app or state.controller
-    if not app or not app.board then return end
-    pcall(function() app.board:setTint("hint", nil) end)
-    pcall(function() app.board:setArrow("hint", nil) end)
-end
-
-local function highlightUci(app, uci)
-    if not app or not app.board or type(uci) ~= "string" or #uci < 4 then return false end
-    local fromSquare = string.sub(uci, 1, 2)
-    local toSquare = string.sub(uci, 3, 4)
-    local fromIndex = Engine.algToIndex64(fromSquare)
-    local toIndex = Engine.algToIndex64(toSquare)
-    if type(fromIndex) ~= "number" or type(toIndex) ~= "number" then return false end
-    clearHighlights(app)
-    local ok = pcall(function()
-        app.board:setTint("hint", fromIndex, COL_HINT, 0.35)
-        app.board:setArrow("hint", fromIndex, toIndex, COL_HINT, 0.15)
-    end)
-    return ok
-end
-
--- ========== brilliant search ==========
-local BRILLIANT_PIECE_VALUES = { [1] = 100, [2] = 320, [3] = 330, [4] = 500, [5] = 900, [6] = 20000 }
-
-local function threatenedMajorPieces(position, attackerSide)
-    local threatened = {}
-    if type(Engine.SQUARES) ~= "table" or type(position.board) ~= "table" or type(position.isAttacked) ~= "function" then
-        return threatened
-    end
-    for index = 1, 64 do
-        local square = Engine.SQUARES[index]
-        local piece = position.board[square]
-        if type(piece) == "number" and piece * attackerSide < 0 and math.abs(piece) >= 3 and math.abs(piece) <= 5 then
-            local ok, attacked = pcall(function() return position:isAttacked(square, attackerSide) end)
-            if ok and attacked then threatened[square] = true end
+    for _, d in ipairs(ROOK_D) do
+        local nf, nr = tf + d[1], tr + d[2]
+        while nf >= 0 and nf < 8 and nr >= 0 and nr < 8 do
+            local p = b[sq(nf, nr)]
+            if p ~= "" then
+                if colorOf(p) == bySide then local u = p:upper(); if u == "R" or u == "Q" then return true end end
+                break
+            end
+            nf = nf + d[1]; nr = nr + d[2]
         end
     end
-    return threatened
+    return false
 end
 
-local function findBrilliantMove(fen, token, baseline)
-    if type(Bot.buildEngine) ~= "function" or type(Bot.Search) ~= "table" or type(Bot.Search.new) ~= "function" then
-        return nil
-    end
-    local okPosition, position = pcall(Bot.buildEngine, fen, {})
-    if not okPosition or type(position) ~= "table" or type(position.legalMoves) ~= "function" or type(position.makeMove) ~= "function" or type(position.undoMove) ~= "function" or type(position.moveToUci) ~= "function" then
-        return nil
-    end
-    local side = tonumber(position.side)
-    if side ~= 1 and side ~= -1 then return nil end
-    local searchOk, search = pcall(Bot.Search.new, position)
-    if not searchOk or type(search) ~= "table" or type(search.rootScores) ~= "function" then return nil end
-    local budget = math.clamp(state.searchTime * 0.55, 0.25, 0.8)
-    local deadline = os.clock() + budget
-    search.deadline = deadline
-    search.soft = deadline
-    search.slice = 0.006
-    search.sliceStart = os.clock()
-    search.cancelled = function() return state.destroyed or token ~= state.analysisToken end
-    local rootScores
-    local completedDepth = 0
-    local maxDepth = math.clamp(math.floor(state.depth), 2, 16)
-    for depth = 1, maxDepth do
-        if state.destroyed or token ~= state.analysisToken or os.clock() >= deadline then break end
-        local okScores, scores = pcall(function() return search:rootScores(depth) end)
-        if not okScores or type(scores) ~= "table" or #scores == 0 then break end
-        rootScores = scores
-        completedDepth = depth
-        if search.stop then break end
-    end
-    if type(rootScores) ~= "table" or #rootScores < 2 or state.destroyed or token ~= state.analysisToken then return nil end
-    local topScore = -math.huge
-    for _, item in ipairs(rootScores) do
-        if type(item) == "table" and type(item.score) == "number" and item.score > topScore then
-            topScore = item.score
-        end
-    end
-    if topScore == -math.huge then return nil end
-    local referenceScore = topScore
-    local originalThreats = threatenedMajorPieces(position, side)
-    local tacticalCandidates = {}
-    local tolerance = math.clamp(tonumber(state.brilliantTolerance) or 90, 25, 150)
-    local epFlag = Engine.F_EP
-    for _, item in ipairs(rootScores) do
-        if state.destroyed or token ~= state.analysisToken then return nil end
-        if type(item) == "table" and type(item.move) == "number" and type(item.score) == "number" then
-            local loss = math.max(0, referenceScore - item.score)
-            if loss <= tolerance then
-                local move = item.move
-                local fromSquare = bit32.band(move, 127)
-                local toSquare = bit32.extract(move, 7, 7)
-                local promotionCode = bit32.extract(move, 14, 3)
-                local movingPiece = tonumber(position.board[fromSquare]) or 0
-                local capturedPiece = tonumber(position.board[toSquare]) or 0
-                local isEnPassant = epFlag ~= nil and bit32.extract(move, 17, 3) == epFlag
-                local captureValue = capturedPiece ~= 0 and (BRILLIANT_PIECE_VALUES[math.abs(capturedPiece)] or 0) or (isEnPassant and 100 or 0)
-                local movingValue = BRILLIANT_PIECE_VALUES[math.abs(movingPiece)] or 0
-                local uci
-                pcall(function() uci = position:moveToUci(move) end)
-                if type(uci) == "string" then
-                    local madeMove = false
-                    local givesCheck = false
-                    local isHanging = false
-                    local newThreatCount = 0
-                    local evalOk = pcall(function()
-                        position:makeMove(move)
-                        madeMove = true
-                        if type(position.isAttacked) == "function" and type(position.kingSq) == "table" then
-                            givesCheck = position:isAttacked(position.kingSq[-side], side) == true
-                            isHanging = position:isAttacked(toSquare, -side) == true
+local function addMove(moves, from, to, captured, promo, flags)
+    table.insert(moves, { from = from, to = to, captured = captured or "", promo = promo or "", flags = flags or "" })
+end
+
+local function genPseudo(st, capturesOnly)
+    local b = st.b; local side = st.side; local moves = {}
+    for i = 0, 63 do
+        local p = b[i]
+        if p ~= "" and colorOf(p) == side then
+            local u = p:upper(); local f, r = fileOf(i), rankOf(i)
+            if u == "P" then
+                local dir = side == "w" and -1 or 1
+                local startRank = side == "w" and 6 or 1
+                local promoRank = side == "w" and 0 or 7
+                local oneR = r + dir
+                if oneR >= 0 and oneR < 8 then
+                    local one = sq(f, oneR)
+                    if b[one] == "" then
+                        if not capturesOnly then
+                            if oneR == promoRank then
+                                for _, pr in ipairs({ "Q", "R", "B", "N" }) do addMove(moves, i, one, "", side == "w" and pr or pr:lower(), "promo") end
+                            else addMove(moves, i, one) end
                         end
-                        local afterThreats = threatenedMajorPieces(position, side)
-                        for square in pairs(afterThreats) do
-                            if not originalThreats[square] then newThreatCount += 1 end
+                        if r == startRank then
+                            local two = sq(f, r + 2 * dir)
+                            if b[two] == "" then addMove(moves, i, two, "", "", "double") end
                         end
-                    end)
-                    if madeMove then pcall(function() position:undoMove() end) end
-                    if evalOk then
-                        local isPromotion = promotionCode ~= 0 or #uci >= 5
-                        local isSacrifice = movingValue >= 300 and movingValue > captureValue and isHanging and (givesCheck or newThreatCount > 0 or loss <= 35)
-                        local priority = 0
-                        local reasons = {}
-                        if newThreatCount >= 2 then priority += 520; table.insert(reasons, "fork") elseif newThreatCount == 1 then priority += 100; table.insert(reasons, "new attack") end
-                        if givesCheck then priority += 180; table.insert(reasons, "check") end
-                        if captureValue >= 900 then priority += 190; table.insert(reasons, "queen capture")
-                        elseif captureValue >= 500 then priority += 145; table.insert(reasons, "rook capture")
-                        elseif captureValue >= 300 then priority += 95; table.insert(reasons, "piece capture")
-                        elseif captureValue > 0 then priority += 45; table.insert(reasons, "capture") end
-                        if isPromotion then priority += 240; table.insert(reasons, "promotion") end
-                        if isSacrifice then priority += 225; table.insert(reasons, "sacrifice") end
-                        if uci ~= (baseline and baseline.best) then priority += 18 end
-                        local utility = priority - loss * 0.42
-                        if priority >= 120 then
-                            table.insert(tacticalCandidates, {
-                                uci = uci, score = item.score, loss = loss,
-                                utility = utility, reason = table.concat(reasons, ", "),
-                                depth = completedDepth,
-                            })
+                    end
+                    for _, df in ipairs({ -1, 1 }) do
+                        local nf = f + df
+                        if nf >= 0 and nf < 8 then
+                            local t = sq(nf, oneR); local tp = b[t]
+                            if tp ~= "" and colorOf(tp) ~= side then
+                                if oneR == promoRank then
+                                    for _, pr in ipairs({ "Q", "R", "B", "N" }) do addMove(moves, i, t, tp, side == "w" and pr or pr:lower(), "promo") end
+                                else addMove(moves, i, t, tp) end
+                            elseif t == st.ep and tp == "" then addMove(moves, i, t, side == "w" and "p" or "P", "", "ep") end
                         end
+                    end
+                end
+            elseif u == "N" or u == "K" then
+                for _, d in ipairs(u == "N" and KNIGHT_D or KING_D) do
+                    local nf, nr = f + d[1], r + d[2]
+                    if nf >= 0 and nf < 8 and nr >= 0 and nr < 8 then
+                        local t = sq(nf, nr); local tp = b[t]
+                        if tp == "" then if not capturesOnly then addMove(moves, i, t) end
+                        elseif colorOf(tp) ~= side then addMove(moves, i, t, tp) end
+                    end
+                end
+            end
+            if u == "B" or u == "R" or u == "Q" then
+                local dirs = {}
+                if u == "B" or u == "Q" then for _, d in ipairs(BISHOP_D) do table.insert(dirs, d) end end
+                if u == "R" or u == "Q" then for _, d in ipairs(ROOK_D) do table.insert(dirs, d) end end
+                for _, d in ipairs(dirs) do
+                    local nf, nr = f + d[1], r + d[2]
+                    while nf >= 0 and nf < 8 and nr >= 0 and nr < 8 do
+                        local t = sq(nf, nr); local tp = b[t]
+                        if tp == "" then if not capturesOnly then addMove(moves, i, t) end
+                        else
+                            if colorOf(tp) ~= side then addMove(moves, i, t, tp) end
+                            break
+                        end
+                        nf = nf + d[1]; nr = nr + d[2]
                     end
                 end
             end
         end
     end
-    if #tacticalCandidates == 0 then return nil end
-    table.sort(tacticalCandidates, function(a, b)
-        if a.utility == b.utility then return a.score > b.score end
-        return a.utility > b.utility
-    end)
-    local chosen = tacticalCandidates[1]
-    local nearTop = {}
-    for _, candidate in ipairs(tacticalCandidates) do
-        if chosen.utility - candidate.utility <= 22 then table.insert(nearTop, candidate) end
+    if not capturesOnly then
+        local b2 = st.b; local opp = enemySide(side)
+        if side == "w" and b2[60] == "K" then
+            if st.castling:find("K") and b2[61] == "" and b2[62] == "" and b2[63] == "R" and not Engine.IsAttacked(st, 60, opp) and not Engine.IsAttacked(st, 61, opp) and not Engine.IsAttacked(st, 62, opp) then addMove(moves, 60, 62, "", "", "castle") end
+            if st.castling:find("Q") and b2[59] == "" and b2[58] == "" and b2[57] == "" and b2[56] == "R" and not Engine.IsAttacked(st, 60, opp) and not Engine.IsAttacked(st, 59, opp) and not Engine.IsAttacked(st, 58, opp) then addMove(moves, 60, 58, "", "", "castle") end
+        elseif side == "b" and b2[4] == "k" then
+            if st.castling:find("k") and b2[5] == "" and b2[6] == "" and b2[7] == "r" and not Engine.IsAttacked(st, 4, opp) and not Engine.IsAttacked(st, 5, opp) and not Engine.IsAttacked(st, 6, opp) then addMove(moves, 4, 6, "", "", "castle") end
+            if st.castling:find("q") and b2[3] == "" and b2[2] == "" and b2[1] == "" and b2[0] == "r" and not Engine.IsAttacked(st, 4, opp) and not Engine.IsAttacked(st, 3, opp) and not Engine.IsAttacked(st, 2, opp) then addMove(moves, 4, 2, "", "", "castle") end
+        end
     end
-    if #nearTop > 1 then chosen = nearTop[math.random(1, #nearTop)] end
-    return chosen
+    return moves
 end
 
-local function analyzeFen(fen, token)
-    local options = {
-        slice = 0.01,
-        cancelled = function() return state.destroyed or token ~= state.analysisToken end,
-    }
-    local result
-    if state.useVortex and VortexBot and type(VortexBot.analyse) == "function" then
-        local ok, value = pcall(function()
-            return VortexBot.analyse(fen, {}, state.searchTime, state.depth, options)
-        end)
-        if ok and type(value) == "table" then
-            result = value
-            setEngine("vortex")
-        end
+function Engine.Make(st, m)
+    local b = st.b; local undo = { captured = b[m.to], cf = -1, castling = st.castling, ep = st.ep, moved = b[m.from] }
+    local p = b[m.from]
+    if m.flags == "ep" then local capSq = m.to + (st.side == "w" and 8 or -8); undo.captured = b[capSq]; undo.cf = capSq; b[capSq] = "" end
+    b[m.to] = m.promo ~= "" and m.promo or p; b[m.from] = ""
+    if m.flags == "castle" then
+        if m.to == 62 then b[61] = b[63]; b[63] = "" elseif m.to == 58 then b[59] = b[56]; b[56] = "" elseif m.to == 6 then b[5] = b[7]; b[7] = "" elseif m.to == 2 then b[3] = b[0]; b[0] = "" end
     end
-    if type(result) ~= "table" or (result.best == nil and result.terminal == nil) then
-        local ok, value = pcall(function()
-            return Bot.analyse(fen, {}, state.searchTime, state.depth, options)
-        end)
-        if ok and type(value) == "table" then
-            result = value
-            setEngine("bot")
-        elseif not result then
-            return nil, tostring(value)
-        end
-    end
-    if type(result) ~= "table" then return nil, "engine не дав результату" end
-    if result.best ~= nil and type(result.best) ~= "string" then return nil, "engine дав не той хід" end
-    if state.brilliantMode and result.best ~= nil and token == state.analysisToken then
-        local engineBest = result.best
-        local tacticalMove = findBrilliantMove(fen, token, result)
-        if tacticalMove and type(tacticalMove.uci) == "string" then
-            result.engineBest = engineBest
-            result.best = tacticalMove.uci
-            result.brilliantMove = tacticalMove.reason
-            result.brilliantLoss = tacticalMove.loss
-            result.tacticalDepth = tacticalMove.depth
-            if tacticalMove.uci ~= engineBest then
-                local sideToMove = string.match(fen, "^[^ ]+%s+([wb])")
-                local sideValue = sideToMove == "w" and 1 or sideToMove == "b" and -1 or 1
-                result.score = tacticalMove.score * sideValue
-                result.mate = nil
-            end
-        end
-    end
-    return result
+    local c = st.castling
+    if p == "K" then c = c:gsub("K", ""):gsub("Q", "") elseif p == "k" then c = c:gsub("k", ""):gsub("q", "") end
+    if m.from == 56 or m.to == 56 then c = c:gsub("Q", "") end
+    if m.from == 63 or m.to == 63 then c = c:gsub("K", "") end
+    if m.from == 0 or m.to == 0 then c = c:gsub("q", "") end
+    if m.from == 7 or m.to == 7 then c = c:gsub("k", "") end
+    st.castling = c; st.ep = -1
+    if m.flags == "double" then st.ep = m.from + (st.side == "w" and -8 or 8) end
+    st.side = enemySide(st.side)
+    return undo
 end
 
--- ========== move submit ==========
-local function sendUciMove(app, session, fen, uci, requireAutoPermission)
-    if state.destroyed then return false, "script stopped" end
-    if not app or app.session ~= session then return false, "сесія змінилась" end
-    if currentFen(session) ~= fen then return false, "позиція змінилась" end
-    local reason = moveBlockReason(session, requireAutoPermission)
-    if reason then return false, reason end
-    if type(uci) ~= "string" or not string.match(uci, "^[a-h][1-8][a-h][1-8][qrbn]?$") then
-        return false, "хід не uci"
+function Engine.Unmake(st, m, undo)
+    local b = st.b; st.side = enemySide(st.side); b[m.from] = undo.moved
+    if undo.cf >= 0 then b[undo.cf] = undo.captured; b[m.to] = "" else b[m.to] = undo.captured end
+    if m.flags == "castle" then
+        if m.to == 62 then b[63] = b[61]; b[61] = "" elseif m.to == 58 then b[56] = b[59]; b[59] = "" elseif m.to == 6 then b[7] = b[5]; b[5] = "" elseif m.to == 2 then b[0] = b[3]; b[3] = "" end
     end
-    local fromIndex = Engine.algToIndex64(string.sub(uci, 1, 2))
-    local toIndex = Engine.algToIndex64(string.sub(uci, 3, 4))
-    local promoLetter = string.sub(uci, 5, 5)
-    local promoType = PROMOTION_TYPES[promoLetter]
-    if type(fromIndex) ~= "number" or type(toIndex) ~= "number" then
-        return false, "не конвертую клітинки"
-    end
-    local moveHandler
-    if session.kind == "puzzle" then
-        moveHandler = app.puzzleMove
-        if type(moveHandler) ~= "function" then return false, "нема puzzleMove" end
-    else
-        moveHandler = app.onBoardMove
-        if type(moveHandler) ~= "function" then return false, "нема onBoardMove" end
-    end
-    local ok, response = pcall(function()
-        return moveHandler(fromIndex, toIndex, promoType, false)
-    end)
-    if not ok then return false, "move handler error: " .. tostring(response) end
-    if response == false then return false, "гра відхилила хід" end
-    return true, uci
+    st.castling = undo.castling; st.ep = undo.ep
 end
 
--- ========== analysis runner ==========
--- ALWAYS highlights the suggested move, then plays it if auto.
-local function runAnalysis(app, session, fen, playAfter, source)
-    if state.destroyed or state.analysisBusy then return false end
-    state.analysisBusy = true
-    state.analysisToken += 1
-    local token = state.analysisToken
+local function findKing(st, side)
+    local k = side == "w" and "K" or "k"
+    for i = 0, 63 do if st.b[i] == k then return i end end
+    return -1
+end
 
-    task.spawn(function()
-        local result, err = analyzeFen(fen, token)
-        if state.destroyed or token ~= state.analysisToken then
-            state.analysisBusy = false
-            return
+function Engine.LegalMoves(st)
+    local pseudo = genPseudo(st, false); local out = {}; local mySide = st.side
+    for _, m in ipairs(pseudo) do
+        local undo = Engine.Make(st, m)
+        if not Engine.IsAttacked(st, findKing(st, mySide), st.side) then table.insert(out, m) end
+        Engine.Unmake(st, m, undo)
+    end
+    return out
+end
+
+local function mirrorW(i) return (7 - math.floor(i / 8)) * 8 + (i % 8) end
+
+local function evaluate(st)
+    local score = 0; local b = st.b
+    for i = 0, 63 do
+        local p = b[i]
+        if p ~= "" then
+            local w = isWhitePiece(p); local u = p:upper(); local tbl = PST[u]
+            local v = VALUES[u] + (tbl and tbl[w and mirrorW(i) or i] or 0)
+            if w then score = score + v else score = score - v end
         end
-        state.analysisBusy = false
+    end
+    return st.side == "w" and score or -score
+end
 
-        if not result then
-            log("аналіз зламався: " .. tostring(err))
-            if source == "auto" then state.lastAutoFen = fen end
-            if source == "suggest" then state.lastHighlightFen = fen end
-            return
+local moveCounter = 0; local maxNodes = 0
+
+local function quiesce(st, alpha, beta, qd)
+    moveCounter = moveCounter + 1
+    if moveCounter % 1000 == 0 then task.wait() end
+    if moveCounter > maxNodes then return evaluate(st) end
+    local stand = evaluate(st)
+    if qd >= 5 or stand >= beta then return stand end
+    if stand > alpha then alpha = stand end
+    local moves = genPseudo(st, true)
+    table.sort(moves, function(a, b2) return (a.captured ~= "" and VALUES[a.captured:upper()] or 0) > (b2.captured ~= "" and VALUES[b2.captured:upper()] or 0) end)
+    local mySide = st.side
+    for _, m in ipairs(moves) do
+        local undo = Engine.Make(st, m); local ksq = findKing(st, mySide)
+        if not Engine.IsAttacked(st, ksq, st.side) then
+            local score = -quiesce(st, -beta, -alpha, qd + 1); Engine.Unmake(st, m, undo)
+            if score >= beta then return beta end
+            if score > alpha then alpha = score end
+        else Engine.Unmake(st, m, undo) end
+    end
+    return alpha
+end
+
+local function search(st, depth, alpha, beta, ply)
+    moveCounter = moveCounter + 1
+    if moveCounter % 1000 == 0 then task.wait() end
+    if moveCounter > maxNodes then return evaluate(st) end
+    if depth <= 0 then return quiesce(st, alpha, beta, 0) end
+    local moves = genPseudo(st, false)
+    table.sort(moves, function(a, b2) return ((a.captured ~= "" and VALUES[a.captured:upper()] or 0) * 10 + (a.promo ~= "" and 900 or 0)) > ((b2.captured ~= "" and VALUES[b2.captured:upper()] or 0) * 10 + (b2.promo ~= "" and 900 or 0)) end)
+    local mySide = st.side; local anyLegal = false
+    for _, m in ipairs(moves) do
+        local undo = Engine.Make(st, m)
+        if not Engine.IsAttacked(st, findKing(st, mySide), st.side) then
+            anyLegal = true
+            local score = -search(st, depth - 1, -beta, -alpha, ply + 1)
+            Engine.Unmake(st, m, undo)
+            if score >= beta then return beta end
+            if score > alpha then alpha = score end
+        else Engine.Unmake(st, m, undo) end
+        if moveCounter > maxNodes then break end
+    end
+    if not anyLegal then
+        if Engine.IsAttacked(st, findKing(st, mySide), enemySide(st.side)) then return -100000 + ply end
+        return 0
+    end
+    return alpha
+end
+
+function Engine.BestMove(st, maxDepth, nodeCap)
+    maxNodes = nodeCap or 200000; moveCounter = 0
+    local rootMoves = Engine.LegalMoves(st)
+    if #rootMoves == 0 then return nil end
+    if #rootMoves == 1 then return rootMoves[1] end
+    table.sort(rootMoves, function(a, b2) return (a.captured ~= "" and VALUES[a.captured:upper()] or 0) * 10 > (b2.captured ~= "" and VALUES[b2.captured:upper()] or 0) * 10 end)
+    local best = rootMoves[1]; local bestScore = -1000000
+    for depth = 1, maxDepth do
+        local localBest, localScore = best, -1000000; local alpha = -1000000
+        for _, m in ipairs(rootMoves) do
+            local undo = Engine.Make(st, m); local score = -search(st, depth - 1, -1000000, -alpha, 1); Engine.Unmake(st, m, undo)
+            if score > localScore then localScore = score; localBest = m end
+            if score > alpha then alpha = score end
+            if moveCounter > maxNodes then break end
         end
+        if moveCounter <= maxNodes then best, bestScore = localBest, localScore end
+        if moveCounter > maxNodes then break end
+        if math.abs(bestScore) > 90000 then break end
+    end
+    return best, bestScore
+end
 
-        if not app or app.session ~= session or currentFen(session) ~= fen then
-            log("позиція змінилась, потужно")
-            return
-        end
-
-        if type(result.best) ~= "string" then
-            log("нема ходу, потужно сумно")
-            state.best = nil
-            if source == "auto" then state.lastAutoFen = fen end
-            if source == "suggest" then state.lastHighlightFen = fen end
-            clearHighlights(app)
-            return
-        end
-
-        state.best = { app = app, session = session, fen = fen, uci = result.best, result = result }
-        local evalText = formatEvaluation(result)
-        log("хід " .. result.best .. " (" .. evalText .. ")")
-
-        -- ALWAYS highlight the move — auto or suggest
-        if isMyTurn(session) then
-            highlightUci(app, result.best)
-        else
-            clearHighlights(app)
-        end
-
-        if source == "suggest" then
-            if source == "suggest" then state.lastHighlightFen = fen end
-            return
-        end
-
-        if playAfter then
-            task.wait(state.playDelay)
-            if state.destroyed or token ~= state.analysisToken then return end
-            local success, message = sendUciMove(app, session, fen, result.best, source == "auto")
-            if success then
-                log("зіграв " .. tostring(message) .. " потужно")
+local function boardToFen(st)
+    local rows = {}
+    for r = 0, 7 do
+        local row = ""; local empty = 0
+        for f = 0, 7 do
+            local p = st.b[sq(f, r)]
+            if p == "" then empty = empty + 1
             else
-                log("не зіграв: " .. tostring(message))
+                if empty > 0 then row = row .. tostring(empty); empty = 0 end
+                row = row .. p
             end
-            if source == "auto" then state.lastAutoFen = fen end
         end
-    end)
+        if empty > 0 then row = row .. tostring(empty) end
+        table.insert(rows, row)
+    end
+    local placement = table.concat(rows, "/")
+    local side = st.side or "w"
+    local castling = st.castling or "-"; if castling == "" then castling = "-" end
+    local ep = "-"
+    if st.ep and st.ep >= 0 then ep = string.char(97 + fileOf(st.ep)) .. tostring(8 - rankOf(st.ep)) end
+    return placement .. " " .. side .. " " .. castling .. " " .. ep .. " 0 1"
+end
+
+-- ========== HTTP ==========
+local function httpRequest(options)
+    local reqFunc = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or request or http_request
+    if not reqFunc then return nil, "no http executor function" end
+    local ok, res = pcall(reqFunc, options)
+    if not ok then return nil, tostring(res) end
+    return res
+end
+
+-- ========== STOCKFISH.ONLINE ==========
+local STOCKFISH_URL = "https://stockfish.online/api/s/v2.php"
+
+local function askStockfish(fen, depth, skill)
+    local encodedFen = HttpService:UrlEncode(fen)
+    local url = STOCKFISH_URL .. "?fen=" .. encodedFen .. "&depth=" .. tostring(depth or 12)
+    if skill then url = url .. "&skill=" .. tostring(skill) end
+    local res, err = httpRequest({ Url = url, Method = "GET" })
+    if not res then stockfishLastError = "http fail: " .. tostring(err); return nil end
+    if res.StatusCode ~= 200 then stockfishLastError = "status " .. tostring(res.StatusCode); return nil end
+    local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+    if not ok or type(data) ~= "table" then stockfishLastError = "json parse fail"; return nil end
+    if data.success == false then stockfishLastError = "api success=false"; return nil end
+    local raw = data.bestmove or (data.data and data.data.bestmove)
+    if not raw or raw == "" then stockfishLastError = "empty bestmove"; return nil end
+    local uci = raw:match("bestmove%s+([a-h][1-8][a-h][1-8]%w?)") or raw:match("^([a-h][1-8][a-h][1-8]%w?)")
+    if not uci then stockfishLastError = "cannot parse: " .. raw; return nil end
+    local fromF = string.byte(uci, 1) - 97
+    local fromR = tonumber(uci:sub(2, 2))
+    local toF = string.byte(uci, 3) - 97
+    local toR = tonumber(uci:sub(4, 4))
+    if not fromF or not fromR or not toF or not toR then stockfishLastError = "coord fail"; return nil end
+    local fromIdx = (8 - fromR) * 8 + fromF
+    local toIdx = (8 - toR) * 8 + toF
+    local promo = ""
+    if #uci >= 5 then promo = uci:sub(5, 5) end
+    return { from = fromIdx, to = toIdx, promo = promo, flags = "", captured = "" }
+end
+
+-- ========== BOARD ADAPTER ==========
+local PIECE_BY_IMG = {
+    ["rbxassetid://108253639129512"] = "K", ["rbxassetid://128494764910602"] = "Q", ["rbxassetid://133288029788689"] = "R",
+    ["rbxassetid://85269847273836"] = "B", ["rbxassetid://111025513068016"] = "N", ["rbxassetid://130108347060797"] = "P",
+    ["rbxassetid://99364349373891"] = "k", ["rbxassetid://87797543393819"] = "q", ["rbxassetid://92908975354335"] = "r",
+    ["rbxassetid://72796651173850"] = "b", ["rbxassetid://104573159846789"] = "n", ["rbxassetid://71167246324478"] = "p",
+}
+
+local function getBoard()
+    local gui = player:FindFirstChild("PlayerGui")
+    if not gui then return nil end
+    local chess = gui:FindFirstChild("ChessUI")
+    if not chess then return nil end
+    local root = chess:FindFirstChild("Root")
+    if not root then return nil end
+    return root:FindFirstChild("Board")
+end
+
+local Bot = {
+    orientation = "w", ourSide = "w", state = nil, lastGrid = nil, pending = nil,
+    running = true, lastInfo = "idle", lastMove = "-", lastPly = -1, awaitingPly = nil,
+    moveDelayMin = 0.5, moveDelayMax = 2.0,
+    turnDelay = 0, turnStartTime = 0,
+    awaitingServerUpdate = false, awaitingStartTime = 0,
+}
+
+local function squareToIndex(n)
+    local vn = math.floor((n - 1) / 8); local col = (n - 1) % 8
+    if Bot.orientation == "w" then return (7 - vn) * 8 + col end
+    return vn * 8 + (7 - col)
+end
+
+local function indexToSquareFrame(board, idx)
+    local erow, f = math.floor(idx / 8), idx % 8; local n
+    if Bot.orientation == "w" then n = (7 - erow) * 8 + f + 1 else n = erow * 8 + (7 - f) + 1 end
+    return board.Squares:FindFirstChild("S" .. n)
+end
+
+local function readGrid(board)
+    local centers = {}; local sqSize = 100
+    for i = 1, 64 do
+        local fr = board.Squares:FindFirstChild("S" .. i)
+        if not fr then return nil end
+        local ap, as = fr.AbsolutePosition, fr.AbsoluteSize
+        centers[i] = Vector2.new(ap.X + as.X / 2, ap.Y + as.Y / 2)
+        sqSize = math.max(sqSize, as.X)
+    end
+    local sgrid = {}; for i = 0, 63 do sgrid[i] = "" end
+    local pieces = board:FindFirstChild("Pieces")
+    if not pieces then return nil end
+    for _, p in ipairs(pieces:GetChildren()) do
+        if p:IsA("ImageLabel") and p.Visible then
+            local piece = PIECE_BY_IMG[p.Image]
+            if piece then
+                local ap, as = p.AbsolutePosition, p.AbsoluteSize
+                local c = Vector2.new(ap.X + as.X / 2, ap.Y + as.Y / 2)
+                local bestN, bestD = 0, math.huge
+                for n = 1, 64 do
+                    local d = (centers[n] - c).Magnitude
+                    if d < bestD then bestD, bestN = d, n end
+                end
+                if bestN > 0 and bestD < sqSize * 0.75 then sgrid[bestN - 1] = piece end
+            end
+        end
+    end
+    for i = 0, 63 do
+        if sgrid[i] == "K" then Bot.orientation = math.floor(i / 8) <= 3 and "w" or "b" break end
+    end
+    local grid = {}; for n = 1, 64 do grid[squareToIndex(n)] = sgrid[n - 1] end
+    return grid
+end
+
+local function inferCastling(grid)
+    local c = ""
+    if grid[60] == "K" then if grid[63] == "R" then c = c .. "K" end; if grid[56] == "R" then c = c .. "Q" end end
+    if grid[4] == "k" then if grid[7] == "r" then c = c .. "k" end; if grid[0] == "r" then c = c .. "q" end end
+    return c
+end
+
+local function resync(board, sideGuess)
+    local grid = readGrid(board)
+    if not grid then return false end
+    Bot.ourSide = Bot.orientation
+    local count = 0; for i = 0, 63 do if grid[i] ~= "" then count = count + 1 end end
+    if count < 2 then Bot.state = nil Bot.lastGrid = nil return false end
+    local st = Engine.NewState(); st.b = grid; st.castling = inferCastling(grid); st.side = sideGuess or "w"
+    Bot.state = st; Bot.lastGrid = grid; Bot.lastInfo = "synced (" .. count .. " pieces)"
     return true
 end
 
--- ========== worker loop ==========
-local function startWorker()
-    if state.workerRunning or state.destroyed then return end
-    state.workerRunning = true
-    task.spawn(function()
-        while not state.destroyed and (state.autoPlay or state.autoHighlight) do
-            local app = findController(false)
-            if app then
-                local session, fen, positionError = getPosition(app)
-                if session and fen then
-                    if state.lastSession ~= session then
-                        state.lastSession = session
-                        state.lastAutoFen = nil
-                        state.lastHighlightFen = nil
-                    end
-
-                    local myTurn = isMyTurn(session)
-                    local wantsAuto = state.autoPlay and myTurn and moveBlockReason(session, true) == nil
-                    local needsPlay = wantsAuto and state.lastAutoFen ~= fen
-                    local needsHighlight = state.autoHighlight and myTurn and state.lastHighlightFen ~= fen
-
-                    if state.autoHighlight and not myTurn and state.lastHighlightFen ~= fen then
-                        clearHighlights(app)
-                        state.lastHighlightFen = fen
-                    end
-
-                    if not state.analysisBusy then
-                        if needsPlay then
-                            state.lastAutoFen = fen
-                            -- auto path always highlights, then submits
-                            runAnalysis(app, session, fen, true, "auto")
-                        elseif needsHighlight then
-                            state.lastHighlightFen = fen
-                            runAnalysis(app, session, fen, false, "suggest")
-                        end
-                    end
-                elseif positionError then
-                    log(positionError)
-                end
-            else
-                log(state.scanError or "дошку не знайдено")
-            end
-            task.wait(0.25)
+local function applyMove(st, m)
+    local legal = Engine.LegalMoves(st)
+    for _, lm in ipairs(legal) do
+        if lm.from == m.from and lm.to == m.to and (m.promo == "" or lm.promo:upper() == m.promo:upper()) then
+            Engine.Make(st, lm); return lm
         end
-        state.workerRunning = false
-        if not state.destroyed and (state.autoPlay or state.autoHighlight) then
-            startWorker()
+    end
+    return nil
+end
+
+local START_BACK = "RNBQKBNR"
+local function newGameState()
+    local st = Engine.NewState()
+    for i = 0, 63 do st.b[i] = "" end
+    for f = 0, 7 do
+        st.b[f] = START_BACK:sub(f + 1, f + 1):lower(); st.b[8 + f] = "p"; st.b[48 + f] = "P"; st.b[56 + f] = START_BACK:sub(f + 1, f + 1)
+    end
+    return st
+end
+
+local function uciSquare(u, pos)
+    local f = string.byte(u, pos) - 97; local r = tonumber(u:sub(pos + 1, pos + 1))
+    if not f or not r or f < 0 or f > 7 or r < 1 or r > 8 then return nil end
+    return (8 - r) * 8 + f
+end
+
+local function stateFromUcis(ucis)
+    local st = newGameState()
+    for _, u in ipairs(ucis) do
+        if type(u) ~= "string" or #u < 4 then return nil end
+        local from, to = uciSquare(u, 1), uciSquare(u, 3)
+        if not from or not to then return nil end
+        local mv = { from = from, to = to, promo = #u >= 5 and u:sub(5, 5) or "" }
+        if not applyMove(st, mv) then return nil end
+    end
+    return st
+end
+
+local function squareName(idx) return string.char(97 + fileOf(idx)) .. tostring(8 - rankOf(idx)) end
+local PROMO_TYPE_ID = { Q = 5, R = 4, B = 3, N = 2 }
+local function toGameSquare(idx) return mirrorW(idx) + 1 end
+
+-- ========== HIGHLIGHTS ==========
+local highlightGui = Instance.new("ScreenGui")
+highlightGui.Name = "RoblyHighlights"
+highlightGui.ResetOnSpawn = false
+highlightGui.DisplayOrder = 999
+highlightGui.Parent = playerGui
+
+local function drawHighlight(board, m)
+    for _, obj in ipairs(currentOverlays) do obj:Destroy() end
+    currentOverlays = {}
+    if not board or not m or not enableHighlight then return end
+    local function drawSquare(idx, color, isFrom, isTo)
+        local fr = indexToSquareFrame(board, idx)
+        if not fr then return end
+        local ap, as = fr.AbsolutePosition, fr.AbsoluteSize
+        local hint = Instance.new("Frame")
+        hint.Size = UDim2.new(0, as.X, 0, as.Y)
+        hint.Position = UDim2.new(0, ap.X, 0, ap.Y)
+        hint.BackgroundColor3 = color
+        hint.BackgroundTransparency = highlightTransparency
+        hint.BorderSizePixel = 0
+        hint.ZIndex = 10
+        hint:SetAttribute("IsFrom", isFrom)
+        hint:SetAttribute("IsTo", isTo)
+        hint.Parent = highlightGui
+        table.insert(currentOverlays, hint)
+    end
+    drawSquare(m.from, fromColor, true, false)
+    drawSquare(m.to, toColor, false, true)
+end
+
+local function redrawVisuals()
+    for _, obj in pairs(currentOverlays) do
+        if obj and obj.Parent then
+            obj.BackgroundTransparency = highlightTransparency
+            if obj:GetAttribute("IsFrom") then obj.BackgroundColor3 = fromColor
+            elseif obj:GetAttribute("IsTo") then obj.BackgroundColor3 = toColor end
         end
+    end
+end
+
+-- ========== HIDDEN BOARD ==========
+local hiddenGui = Instance.new("ScreenGui")
+hiddenGui.Name = "HiddenBoardGui"
+hiddenGui.ResetOnSpawn = false
+hiddenGui.DisplayOrder = 999
+hiddenGui.Parent = playerGui
+
+local miniBoard = Instance.new("Frame")
+miniBoard.Size = UDim2.new(0, hiddenBoardSize, 0, hiddenBoardSize)
+miniBoard.Position = UDim2.new(0.5, -hiddenBoardSize/2, 0.5, -hiddenBoardSize/2)
+miniBoard.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+miniBoard.BorderSizePixel = 2
+miniBoard.BorderColor3 = Color3.fromRGB(0, 0, 0)
+miniBoard.Active = true
+miniBoard.Visible = false
+miniBoard.Parent = hiddenGui
+Instance.new("UICorner", miniBoard).CornerRadius = UDim.new(0, 4)
+
+local miniGrid = Instance.new("Frame")
+miniGrid.Size = UDim2.new(1, 0, 1, 0)
+miniGrid.BackgroundTransparency = 1
+miniGrid.Parent = miniBoard
+
+local miniOverlays = {}
+local miniSquares = {}
+for r = 1, 8 do
+    for c = 1, 8 do
+        local sqFrame = Instance.new("Frame")
+        sqFrame.Size = UDim2.new(1/8, 0, 1/8, 0)
+        sqFrame.Position = UDim2.new((c-1)/8, 0, (8-r)/8, 0)
+        sqFrame.BackgroundColor3 = (r + c) % 2 == 0 and Color3.fromRGB(240, 240, 240) or Color3.fromRGB(120, 120, 120)
+        sqFrame.BorderSizePixel = 0
+        sqFrame.Parent = miniGrid
+        miniSquares[(r-1)*8 + c] = sqFrame
+    end
+end
+
+local function drawMiniHighlight(m)
+    for _, obj in ipairs(miniOverlays) do obj:Destroy() end
+    miniOverlays = {}
+    if not m then return end
+    local function highlightSquare(idx, color)
+        local r = math.floor(idx / 8) + 1
+        local c = (idx % 8) + 1
+        local sqFrame = miniSquares[(8-r)*8 + c]
+        if sqFrame then
+            local h = Instance.new("Frame")
+            h.Size = UDim2.new(1, 0, 1, 0)
+            h.BackgroundColor3 = color
+            h.BackgroundTransparency = highlightTransparency
+            h.BorderSizePixel = 0
+            h.ZIndex = 5
+            h.Parent = sqFrame
+            table.insert(miniOverlays, h)
+        end
+    end
+    highlightSquare(m.from, fromColor)
+    highlightSquare(m.to, toColor)
+end
+
+local mbDragging = false
+local mbDragStart, mbStartPos
+miniBoard.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        mbDragging = true; mbDragStart = input.Position; mbStartPos = miniBoard.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if mbDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - mbDragStart
+        miniBoard.Position = UDim2.new(mbStartPos.X.Scale, mbStartPos.X.Offset + delta.X, mbStartPos.Y.Scale, mbStartPos.Y.Offset + delta.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then mbDragging = false end
+end)
+
+-- ========== TIMER ==========
+local timerGui = Instance.new("ScreenGui")
+timerGui.Name = "HumanTimerGui"
+timerGui.ResetOnSpawn = false
+timerGui.DisplayOrder = 1000
+timerGui.Parent = playerGui
+
+local timerFrame = Instance.new("Frame")
+timerFrame.Size = UDim2.new(0, 100, 0, 40)
+timerFrame.Position = UDim2.new(0.5, -50, 0.5, -20)
+timerFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+timerFrame.BorderSizePixel = 2
+timerFrame.BorderColor3 = Color3.fromRGB(0, 0, 0)
+timerFrame.Active = true
+timerFrame.Draggable = true
+timerFrame.Visible = false
+timerFrame.Parent = timerGui
+Instance.new("UICorner", timerFrame).CornerRadius = UDim.new(0, 4)
+
+local timerText = Instance.new("TextLabel")
+timerText.Size = UDim2.new(1, 0, 1, 0)
+timerText.BackgroundTransparency = 1
+timerText.Text = "00.0"
+timerText.TextColor3 = Color3.fromRGB(255, 255, 255)
+timerText.Font = Enum.Font.GothamBold
+timerText.TextSize = 20
+timerText.Parent = timerFrame
+
+-- ========== UI ==========
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "ChessHackV28"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 210, 0, 560)
+mainFrame.Position = UDim2.new(0.25, -105, 0.5, -280)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+mainFrame.BackgroundTransparency = 0.05
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Parent = screenGui
+Instance.new("UIStroke", mainFrame).Color = Color3.fromRGB(60, 60, 60)
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 6)
+
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 28)
+titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+titleBar.BorderSizePixel = 0
+titleBar.Active = true
+titleBar.Parent = mainFrame
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 6)
+
+local titleText = Instance.new("TextLabel")
+titleText.Size = UDim2.new(1, -30, 1, 0)
+titleText.Position = UDim2.new(0, 10, 0, 0)
+titleText.BackgroundTransparency = 1
+titleText.Text = "STOCKFISH v28"
+titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleText.Font = Enum.Font.GothamBold
+titleText.TextSize = 12
+titleText.TextXAlignment = Enum.TextXAlignment.Left
+titleText.Parent = titleBar
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 28, 1, 0)
+closeBtn.Position = UDim2.new(1, -28, 0, 0)
+closeBtn.BackgroundTransparency = 1
+closeBtn.Text = "—"
+closeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 14
+closeBtn.Parent = titleBar
+
+local dragging, dragStart, startPos
+titleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true; dragStart = input.Position; startPos = mainFrame.Position
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+end)
+
+local infoPanel = Instance.new("Frame")
+infoPanel.Size = UDim2.new(1, -16, 0, 24)
+infoPanel.Position = UDim2.new(0, 8, 0, 34)
+infoPanel.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+infoPanel.BackgroundTransparency = 0.2
+infoPanel.Parent = mainFrame
+Instance.new("UICorner", infoPanel).CornerRadius = UDim.new(0, 4)
+Instance.new("UIStroke", infoPanel).Color = Color3.fromRGB(50, 50, 50)
+
+local evalLabel = Instance.new("TextLabel")
+evalLabel.Size = UDim2.new(0.5, 0, 1, 0)
+evalLabel.Position = UDim2.new(0, 4, 0, 0)
+evalLabel.BackgroundTransparency = 1
+evalLabel.Text = "SF: ..."
+evalLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+evalLabel.Font = Enum.Font.Gotham
+evalLabel.TextSize = 10
+evalLabel.TextXAlignment = Enum.TextXAlignment.Left
+evalLabel.Parent = infoPanel
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(0.5, 0, 1, 0)
+statusLabel.Position = UDim2.new(0.5, 0, 0, 0)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Idle"
+statusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+statusLabel.Font = Enum.Font.GothamBold
+statusLabel.TextSize = 10
+statusLabel.TextXAlignment = Enum.TextXAlignment.Right
+statusLabel.Parent = infoPanel
+
+local bottomArea = Instance.new("Frame")
+bottomArea.Size = UDim2.new(1, 0, 0, 180)
+bottomArea.Position = UDim2.new(0, 0, 1, -180)
+bottomArea.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+bottomArea.BorderSizePixel = 0
+bottomArea.Parent = mainFrame
+Instance.new("UICorner", bottomArea).CornerRadius = UDim.new(0, 6)
+Instance.new("UIStroke", bottomArea).Color = Color3.fromRGB(50, 50, 50)
+
+local function createToggleRow(text, yPos, default, callback)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, -16, 0, 20)
+    row.Position = UDim2.new(0, 8, 0, yPos)
+    row.BackgroundTransparency = 1
+    row.Parent = bottomArea
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.7, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+    local tgl = Instance.new("TextButton")
+    tgl.Size = UDim2.new(0, 16, 0, 16)
+    tgl.Position = UDim2.new(1, -16, 0.5, -8)
+    tgl.BackgroundColor3 = default and Color3.fromRGB(80, 80, 80) or Color3.fromRGB(10, 10, 10)
+    tgl.Text = default and "✓" or ""
+    tgl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tgl.Font = Enum.Font.GothamBold
+    tgl.TextSize = 10
+    tgl.Parent = row
+    Instance.new("UIStroke", tgl).Color = Color3.fromRGB(100, 100, 100)
+    Instance.new("UICorner", tgl).CornerRadius = UDim.new(0, 3)
+    tgl.MouseButton1Click:Connect(function()
+        local state = tgl.Text == ""
+        tgl.Text = state and "✓" or ""
+        tgl.BackgroundColor3 = state and Color3.fromRGB(80, 80, 80) or Color3.fromRGB(10, 10, 10)
+        callback(state)
     end)
 end
 
--- ========== button handlers ==========
-autoBtn.MouseButton1Click:Connect(function()
-    autoOn = not autoOn
-    state.autoPlay = autoOn
-    refreshAutoVisual()
-    if autoOn then
-        state.lastAutoFen = nil
-        log("потужний авто включено")
-        startWorker()
-    else
-        log("потужний авто виключено")
+createToggleRow("Highlight Squares", 8, true, function(v)
+    enableHighlight = v
+    if not v then
+        for _, obj in ipairs(currentOverlays) do obj:Destroy() end
+        currentOverlays = {}
+        for _, obj in ipairs(miniOverlays) do obj:Destroy() end
+        miniOverlays = {}
     end
 end)
-
-suggestBtn.MouseButton1Click:Connect(function()
-    suggestOn = not suggestOn
-    state.autoHighlight = suggestOn
-    refreshSuggestVisual()
-    if suggestOn then
-        state.lastHighlightFen = nil
-        log("потужні підказки включено")
-        startWorker()
-    else
-        clearHighlights()
-        state.lastHighlightFen = currentFen(state.controller and state.controller.session)
-        log("потужні підказки виключено")
-    end
+createToggleRow("Auto Play", 32, false, function(v) enableAutoPlay = v end)
+createToggleRow("Human Mode", 56, false, function(v) enableHumanMode = v end)
+createToggleRow("Show Timer", 80, true, function(v)
+    enableShowTimer = v
+    if not v then timerFrame.Visible = false end
+end)
+createToggleRow("Hidden Board", 104, false, function(v)
+    enableHiddenBoard = v
+    miniBoard.Visible = v
 end)
 
--- ========== rightshift ==========
-local hidden = false
-local function setAllVisible(v)
-    autoBtn.Parent.Visible = v
-    suggestBtn.Parent.Visible = v
-    engineBtn.Parent.Visible = v
-    statusStrip.Visible = v
+local startBtn = Instance.new("TextButton")
+startBtn.Size = UDim2.new(1, -16, 0, 28)
+startBtn.Position = UDim2.new(0, 8, 0, 132)
+startBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+startBtn.Text = "Start Hack"
+startBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+startBtn.Font = Enum.Font.GothamBold
+startBtn.TextSize = 12
+startBtn.Parent = bottomArea
+Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0, 4)
+Instance.new("UIStroke", startBtn).Color = Color3.fromRGB(80, 80, 80)
+
+local resyncBtn = Instance.new("TextButton")
+resyncBtn.Size = UDim2.new(1, -16, 0, 20)
+resyncBtn.Position = UDim2.new(0, 8, 0, 160)
+resyncBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+resyncBtn.Text = "Resync Board"
+resyncBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+resyncBtn.Font = Enum.Font.Gotham
+resyncBtn.TextSize = 10
+resyncBtn.Parent = bottomArea
+Instance.new("UICorner", resyncBtn).CornerRadius = UDim.new(0, 4)
+
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(1, 0, 1, -240)
+scrollFrame.Position = UDim2.new(0, 0, 0, 66)
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.ScrollBarThickness = 2
+scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100)
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollFrame.Parent = mainFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 8)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Parent = scrollFrame
+
+local padding = Instance.new("UIPadding", scrollFrame)
+padding.PaddingTop = UDim.new(0, 8)
+padding.PaddingLeft = UDim.new(0, 8)
+padding.PaddingRight = UDim.new(0, 8)
+padding.PaddingBottom = UDim.new(0, 8)
+
+local function createSectionTitle(text)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 0, 14)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = string.upper(text)
+    lbl.TextColor3 = Color3.fromRGB(130, 130, 130)
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 9
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = scrollFrame
+    local line = Instance.new("Frame")
+    line.Size = UDim2.new(1, 0, 0, 1)
+    line.Position = UDim2.new(0, 0, 1, 2)
+    line.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    line.BorderSizePixel = 0
+    line.Parent = lbl
+    return lbl
 end
 
-UserInputService.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.KeyCode == Enum.KeyCode.RightShift then
-        hidden = not hidden
-        setAllVisible(not hidden)
+local function createRow(text, parent)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 20)
+    row.BackgroundTransparency = 1
+    row.Parent = parent or scrollFrame
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.5, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+    return row
+end
+
+local function createTextBox(parent, default, isNumber)
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0, 45, 0, 20)
+    box.Position = UDim2.new(1, -45, 0, 0)
+    box.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    box.Text = tostring(default)
+    box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.Font = Enum.Font.Gotham
+    box.TextSize = 11
+    box.Parent = parent
+    Instance.new("UIStroke", box).Color = Color3.fromRGB(60, 60, 60)
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 3)
+    return box
+end
+
+local function createColorPicker(parent, defaultColor, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 35, 0, 18)
+    btn.Position = UDim2.new(1, -35, 0.5, -9)
+    btn.BackgroundColor3 = defaultColor
+    btn.Text = ""
+    btn.Parent = parent
+    Instance.new("UIStroke", btn).Color = Color3.fromRGB(80, 80, 80)
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
+    btn.MouseButton1Click:Connect(function()
+        local colors = {
+            Color3.fromRGB(255, 50, 50), Color3.fromRGB(255, 150, 50), Color3.fromRGB(255, 255, 50),
+            Color3.fromRGB(50, 255, 50), Color3.fromRGB(50, 255, 255), Color3.fromRGB(50, 150, 255),
+            Color3.fromRGB(150, 50, 255), Color3.fromRGB(255, 50, 255)
+        }
+        local current = btn.BackgroundColor3; local nextIdx = 1
+        for i, col in ipairs(colors) do if col == current then nextIdx = (i % #colors) + 1 break end end
+        btn.BackgroundColor3 = colors[nextIdx]
+        callback(btn.BackgroundColor3)
+    end)
+end
+
+local function createSlider(parent, name, default, minVal, maxVal, callback, precision)
+    precision = precision or 0
+    local mult = 10 ^ precision
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(1, 0, 0, 32)
+    container.BackgroundTransparency = 1
+    container.Parent = parent
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0.5, 0, 0, 14)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = name
+    lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = container
+    local box = createTextBox(container, default, true)
+    box.Position = UDim2.new(1, -45, 0, 0)
+    if precision > 0 then box.Text = string.format("%." .. precision .. "f", default) end
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.new(1, 0, 0, 5)
+    bg.Position = UDim2.new(0, 0, 0, 24)
+    bg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    bg.BorderSizePixel = 0
+    bg.Parent = container
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(1, 0)
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new((default - minVal) / (maxVal - minVal), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(180, 180, 180)
+    fill.BorderSizePixel = 0
+    fill.Parent = bg
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 12, 0, 12)
+    knob.Position = UDim2.new((default - minVal) / (maxVal - minVal), -6, 0.5, -6)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.Parent = bg
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+    local dragging = false
+    local function update(val)
+        val = math.clamp(val, minVal, maxVal)
+        if precision > 0 then val = math.floor(val * mult + 0.5) / mult else val = math.floor(val) end
+        fill.Size = UDim2.new((val - minVal) / (maxVal - minVal), 0, 1, 0)
+        knob.Position = UDim2.new((val - minVal) / (maxVal - minVal), -6, 0.5, -6)
+        if precision > 0 then box.Text = string.format("%." .. precision .. "f", val)
+        else box.Text = tostring(math.floor(val)) end
+        callback(val)
+    end
+    knob.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = true end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local relX = UserInputService:GetMouseLocation().X - bg.AbsolutePosition.X
+            update(minVal + math.clamp(relX / bg.AbsoluteSize.X, 0, 1) * (maxVal - minVal))
+        end
+    end)
+    box.FocusLost:Connect(function()
+        local num = tonumber(box.Text:match("[%d%.]+")) or default
+        update(num)
+    end)
+    return update, container
+end
+
+-- ========== BUILD UI ==========
+-- Section: ENGINE (container will hold either SF or local settings)
+local engineSectionTitle = createSectionTitle("Stockfish")
+
+local sfContainer = Instance.new("Frame")
+sfContainer.Size = UDim2.new(1, 0, 0, 0)
+sfContainer.AutomaticSize = Enum.AutomaticSize.Y
+sfContainer.BackgroundTransparency = 1
+sfContainer.Parent = scrollFrame
+local sfLayout = Instance.new("UIListLayout")
+sfLayout.Padding = UDim.new(0, 8)
+sfLayout.SortOrder = Enum.SortOrder.LayoutOrder
+sfLayout.Parent = sfContainer
+
+local localContainer = Instance.new("Frame")
+localContainer.Size = UDim2.new(1, 0, 0, 0)
+localContainer.AutomaticSize = Enum.AutomaticSize.Y
+localContainer.BackgroundTransparency = 1
+localContainer.Parent = scrollFrame
+localContainer.Visible = false
+local localLayout = Instance.new("UIListLayout")
+localLayout.Padding = UDim.new(0, 8)
+localLayout.SortOrder = Enum.SortOrder.LayoutOrder
+localLayout.Parent = localContainer
+
+local localSectionTitle = createSectionTitle("Local Engine (fallback)")
+-- Move to localContainer
+localSectionTitle.Parent = localContainer
+localSectionTitle.LayoutOrder = 0
+
+-- 3 Stockfish sliders
+createSlider(sfContainer, "SF depth", stockfishDepth, 5, 15, function(v) stockfishDepth = v end)
+createSlider(sfContainer, "SF skill (0-20)", stockfishSkill, 0, 20, function(v) stockfishSkill = v end)
+createSlider(sfContainer, "SF move time (ms)", stockfishMoveTime, 100, 5000, function(v) stockfishMoveTime = v end)
+
+-- Local settings (in localContainer)
+localSectionTitle.Parent = localContainer
+
+-- We need local sliders inside localContainer, but createSlider uses scrollFrame by default.
+-- We'll temporarily create them, then re-parent the containers.
+
+local function buildLocalSliders()
+    local dSlider = createSlider(localContainer, "Depth", currentDepth, 1, 5, function(v) currentDepth = v end)
+    local bSlider = createSlider(localContainer, "Think budget", 15, 2, 20, function(v) currentNodeCap = v * 10000 end)
+end
+buildLocalSliders()
+
+-- Auto-Move Speed section (always shown)
+createSectionTitle("Auto-Move Speed")
+local setMinDelay, setMaxDelay
+local delayPreview
+local function refreshDelayUI()
+    if delayPreview then delayPreview.Text = string.format("Delay: %.1f – %.1fs per move", Bot.moveDelayMin, Bot.moveDelayMax) end
+end
+setMinDelay = createSlider(scrollFrame, "Min delay (s)", 0.5, 0, 30, function(v)
+    Bot.moveDelayMin = v
+    if v > Bot.moveDelayMax then Bot.moveDelayMax = v; if setMaxDelay then setMaxDelay(v) end end
+    refreshDelayUI()
+end, 1)
+setMaxDelay = createSlider(scrollFrame, "Max delay (s)", 2.0, 0, 30, function(v)
+    Bot.moveDelayMax = v
+    if v < Bot.moveDelayMin then Bot.moveDelayMin = v; if setMinDelay then setMinDelay(v) end end
+    refreshDelayUI()
+end, 1)
+delayPreview = Instance.new("TextLabel")
+delayPreview.Size = UDim2.new(1, 0, 0, 12)
+delayPreview.BackgroundTransparency = 1
+delayPreview.Text = string.format("Delay: %.1f – %.1fs per move", Bot.moveDelayMin, Bot.moveDelayMax)
+delayPreview.TextColor3 = Color3.fromRGB(140, 140, 140)
+delayPreview.Font = Enum.Font.Gotham
+delayPreview.TextSize = 9
+delayPreview.TextXAlignment = Enum.TextXAlignment.Left
+delayPreview.Parent = scrollFrame
+
+local presetRow = Instance.new("Frame")
+presetRow.Size = UDim2.new(1, 0, 0, 22)
+presetRow.BackgroundTransparency = 1
+presetRow.Parent = scrollFrame
+local presetNames = { "Bullet", "Blitz", "Rapid", "Classic" }
+local presetData = { { 0.1, 0.5 }, { 0.5, 2 }, { 2, 10 }, { 10, 30 } }
+for i, name in ipairs(presetNames) do
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.25, -2, 1, 0)
+    btn.Position = UDim2.new((i - 1) * 0.25, 1, 0, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    btn.Text = name
+    btn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 9
+    btn.Parent = presetRow
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
+    Instance.new("UIStroke", btn).Color = Color3.fromRGB(80, 80, 80)
+    btn.MouseButton1Click:Connect(function()
+        local d = presetData[i]
+        setMaxDelay(d[2]); setMinDelay(d[1])
+    end)
+end
+
+createSectionTitle("Colors")
+local cRow1 = createRow("From"); createColorPicker(cRow1, fromColor, function(c) fromColor = c; if enableHiddenBoard then drawMiniHighlight(lastBestMove) else redrawVisuals() end end)
+local cRow2 = createRow("To"); createColorPicker(cRow2, toColor, function(c) toColor = c; if enableHiddenBoard then drawMiniHighlight(lastBestMove) else redrawVisuals() end end)
+
+createSectionTitle("Display")
+local vRow = createRow("Transparency")
+local transBox = createTextBox(vRow, 50, true)
+transBox.FocusLost:Connect(function()
+    local val = tonumber(transBox.Text) or 50
+    highlightTransparency = math.clamp(val / 100, 0, 1)
+    if enableHiddenBoard then drawMiniHighlight(lastBestMove) else redrawVisuals() end
+end)
+transBox:GetPropertyChangedSignal("Text"):Connect(function()
+    local val = tonumber(transBox.Text)
+    if val then
+        highlightTransparency = math.clamp(val / 100, 0, 1)
+        if enableHiddenBoard then drawMiniHighlight(lastBestMove) else redrawVisuals() end
     end
 end)
 
--- ========== startup ==========
-refreshAutoVisual()
-refreshSuggestVisual()
-setEngine(VortexBot and "vortex" or "bot")
-log("готово, потужно")
+createSlider(scrollFrame, "Opacity", 50, 0, 100, function(v) highlightTransparency = 1 - (v/100); if enableHiddenBoard then drawMiniHighlight(lastBestMove) else redrawVisuals() end end)
+createSlider(scrollFrame, "Board Size %", 50, 5, 100, function(v)
+    hiddenBoardSize = 120 + (v * 3.8)
+    miniBoard.Size = UDim2.new(0, hiddenBoardSize, 0, hiddenBoardSize)
+end)
 
+listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
+end)
+
+-- ========== ENGINE UI TOGGLE ==========
+local function showStockfishUI()
+    sfContainer.Visible = true
+    localContainer.Visible = false
+    engineSectionTitle.Text = string.upper("Stockfish")
+end
+
+local function showLocalUI()
+    sfContainer.Visible = false
+    localContainer.Visible = true
+    engineSectionTitle.Text = string.upper("Local Engine")
+end
+
+-- ========== MAIN LOOP ==========
 task.spawn(function()
-    local app = findController(true)
-    if app then
-        local session, fen = getPosition(app)
-        if session and fen then
-            log("rochess знайдено, потужно")
+    task.wait(1)
+    while Bot.running do
+        local board = getBoard()
+        local s = App and App.session
+
+        if enableHumanMode and not enableAutoPlay and enableShowTimer and isHackRunning and isTimerRunning then
+            if timerEndTime > 0 then
+                local remaining = timerEndTime - os.clock()
+                if remaining > 0 then
+                    timerText.Text = string.format("%.1f", remaining)
+                    timerText.TextColor3 = Color3.fromRGB(255, 255, 255)
+                else
+                    timerText.Text = "MOVE NOW!"
+                    timerText.TextColor3 = Color3.fromRGB(255, 50, 50)
+                end
+            end
         else
-            log("гра ще не почалась, потужно")
+            timerFrame.Visible = false
         end
+
+        if isHackRunning and s and board and (s.kind == "online" or s.kind == "bot") then
+            if s.over then
+                statusLabel.Text = "Status: Game over"
+            else
+                local ucis = s.ucis or {}
+                local ok, myTurn = pcall(function() return s:isMyTurn() end)
+
+                if Bot.awaitingServerUpdate and Bot.awaitingStartTime > 0 and os.clock() - Bot.awaitingStartTime > 3 then
+                    Bot.awaitingServerUpdate = false
+                end
+
+                if ok and myTurn then
+                    -- Sync on new turn
+                    if #ucis ~= Bot.lastPly or not Bot.state then
+                        Bot.lastPly = #ucis
+                        Bot.awaitingServerUpdate = false
+                        Bot.awaitingStartTime = 0
+                        local lo = math.min(Bot.moveDelayMin, Bot.moveDelayMax)
+                        local hi = math.max(Bot.moveDelayMin, Bot.moveDelayMax)
+                        Bot.turnDelay = lo + math.random() * (hi - lo)
+                        Bot.turnStartTime = os.clock()
+
+                        local st = nil
+                        pcall(function() st = stateFromUcis(ucis) end)
+                        if not st then
+                            local grid = readGrid(board)
+                            if grid then
+                                local cnt = 0
+                                for i = 0, 63 do if grid[i] ~= "" then cnt = cnt + 1 end end
+                                if cnt >= 2 then
+                                    st = Engine.NewState()
+                                    st.b = grid
+                                    st.castling = inferCastling(grid)
+                                    st.side = Bot.orientation
+                                end
+                            end
+                        end
+                        if not st and useVortexFallback and VortexBot and s.startFen then
+                            local ok2, vmove = pcall(function()
+                                return VortexBot.think(s.startFen, table.clone(ucis), { rating = 1200 }, {})
+                            end)
+                            if ok2 and type(vmove) == "string" and #vmove >= 4 then
+                                local fromAlg = vmove:sub(1, 2)
+                                local toAlg = vmove:sub(3, 4)
+                                local fromIdx, toIdx
+                                if BoardHelper and BoardHelper.algToIndex64 then
+                                    fromIdx = BoardHelper.algToIndex64(fromAlg); toIdx = BoardHelper.algToIndex64(toAlg)
+                                else
+                                    local function alg(i)
+                                        local f = string.byte(i, 1) - 97
+                                        local r = tonumber(i:sub(2, 2))
+                                        return (8 - r) * 8 + f
+                                    end
+                                    fromIdx = alg(fromAlg); toIdx = alg(toAlg)
+                                end
+                                if fromIdx and toIdx then
+                                    local m = { from = fromIdx, to = toIdx, captured = "", promo = #vmove >= 5 and vmove:sub(5, 5) or "", flags = "" }
+                                    lastBestMove = m
+                                    statusLabel.Text = string.format("Best: %s%s", fromAlg, toAlg)
+                                    if enableHighlight then
+                                        if enableHiddenBoard then drawMiniHighlight(m) else drawHighlight(board, m) end
+                                    end
+                                    if enableAutoPlay then
+                                        local promoId = m.promo ~= "" and PROMO_TYPE_ID[m.promo:upper()] or nil
+                                        pcall(App.onBoardMove, toGameSquare(m.from), toGameSquare(m.to), promoId)
+                                        Bot.awaitingServerUpdate = true
+                                        Bot.awaitingStartTime = os.clock()
+                                    end
+                                end
+                            end
+                        end
+                        if st then
+                            Bot.state = st
+                            Bot.lastGrid = nil
+                            Bot.pending = nil
+                            statusLabel.Text = "Status: Synced"
+                            isTimerRunning = false
+                        else
+                            Bot.state = nil
+                            statusLabel.Text = "Status: Sync failed"
+                        end
+                    end
+
+                    if Bot.state then
+                        Bot.ourSide = Bot.state.side
+
+                        -- THINK GATE: only think if this ply hasn't been thought about yet
+                        local alreadyThoughtThisPly = (lastThinkPly == #ucis)
+                        local canTrigger = not isCalculating and not isTimerRunning and not Bot.awaitingServerUpdate and not alreadyThoughtThisPly
+                        if canTrigger and enableAutoPlay then
+                            if os.clock() - Bot.turnStartTime < Bot.turnDelay then canTrigger = false end
+                        end
+
+                        if canTrigger then
+                            lastThinkPly = #ucis  -- lock this ply
+                            isCalculating = true
+                            calculationToken = calculationToken + 1
+                            local token = calculationToken
+                            statusLabel.Text = "Status: Thinking..."
+
+                            task.spawn(function()
+                                local best = nil
+                                local fen = boardToFen(Bot.state)
+                                if stockfishWorking ~= false then
+                                    local sfMove = askStockfish(fen, stockfishDepth, stockfishSkill)
+                                    if sfMove then
+                                        local legal = Engine.LegalMoves(Bot.state)
+                                        local legalMove = nil
+                                        for _, lm in ipairs(legal) do
+                                            if lm.from == sfMove.from and lm.to == sfMove.to then legalMove = lm; break end
+                                        end
+                                        if legalMove then
+                                            best = legalMove
+                                            if sfMove.promo ~= "" then best.promo = sfMove.promo end
+                                            stockfishWorking = true
+                                            evalLabel.Text = "SF: online ✓"
+                                            evalLabel.TextColor3 = Color3.fromRGB(120, 255, 120)
+                                        else
+                                            stockfishLastError = "SF illegal move"
+                                            evalLabel.Text = "SF: illegal → local"
+                                            evalLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+                                        end
+                                    else
+                                        if stockfishWorking == nil then
+                                            stockfishWorking = false
+                                            evalLabel.Text = "SF: offline → local"
+                                            evalLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
+                                            print("[SF] error: " .. stockfishLastError)
+                                        end
+                                    end
+                                end
+
+                                if not best then
+                                    local isSimple = false
+                                    local legalMoves = Engine.LegalMoves(Bot.state)
+                                    if #legalMoves <= 5 then isSimple = true end
+                                    local currentCap = isSimple and math.min(15000, currentNodeCap) or currentNodeCap
+                                    local localBest = Engine.BestMove(Bot.state, currentDepth, currentCap)
+                                    best = localBest
+                                    if best and stockfishWorking ~= true then
+                                        evalLabel.Text = "Local engine"
+                                        evalLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+                                    end
+                                end
+
+                                if token ~= calculationToken or not isHackRunning then
+                                    isCalculating = false
+                                    return
+                                end
+
+                                if best then
+                                    lastBestMove = best
+                                    local txt = string.format("Best: %s%s", squareName(best.from), squareName(best.to))
+                                    statusLabel.Text = "Status: " .. txt
+                                    if enableHighlight then
+                                        if enableHiddenBoard then drawMiniHighlight(best) else drawHighlight(board, best) end
+                                    end
+                                    if enableAutoPlay then
+                                        local promoId = best.promo ~= "" and PROMO_TYPE_ID[best.promo:upper()] or nil
+                                        pcall(App.onBoardMove, toGameSquare(best.from), toGameSquare(best.to), promoId)
+                                        Bot.awaitingServerUpdate = true
+                                        Bot.awaitingStartTime = os.clock()
+                                        Bot.awaitingPly = #ucis + 1
+                                    elseif enableHumanMode then
+                                        local baseTime = (best._fromSF) and 2.0 or 4.0
+                                        local thinkTime = baseTime + (currentDepth * 0.5) + math.random(-5, 5) / 10
+                                        if enableShowTimer then
+                                            timerEndTime = os.clock() + thinkTime
+                                            isTimerRunning = true
+                                            timerFrame.Visible = true
+                                        end
+                                    end
+                                end
+                                isCalculating = false
+                            end)
+                        end
+                    end
+                else
+                    if #currentOverlays > 0 and enableHighlight then
+                        for _, obj in ipairs(currentOverlays) do obj:Destroy() end
+                        currentOverlays = {}
+                    end
+                    if #miniOverlays > 0 and enableHiddenBoard then
+                        for _, obj in ipairs(miniOverlays) do obj:Destroy() end
+                        miniOverlays = {}
+                    end
+                end
+            end
+        elseif isHackRunning then
+            statusLabel.Text = "Status: Waiting for game..."
+        else
+            statusLabel.Text = "Status: Idle (Hack Off)"
+        end
+        task.wait(0.05)
+    end
+end)
+
+startBtn.MouseButton1Click:Connect(function()
+    isHackRunning = not isHackRunning
+    if isHackRunning then
+        startBtn.Text = "Stop Hack"
+        startBtn.BackgroundColor3 = Color3.fromRGB(120, 40, 40)
     else
-        log(state.scanError or "відкрий гру, потужно")
+        startBtn.Text = "Start Hack"
+        startBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        for _, obj in ipairs(currentOverlays) do obj:Destroy() end
+        currentOverlays = {}
+        for _, obj in ipairs(miniOverlays) do obj:Destroy() end
+        miniOverlays = {}
+        Bot.state = nil
+        Bot.lastPly = -1
+        Bot.turnStartTime = 0
+        Bot.turnDelay = 0
+        Bot.awaitingServerUpdate = false
+        Bot.awaitingStartTime = 0
+        isCalculating = false
+        isTimerRunning = false
+        calculationToken = calculationToken + 1
+        timerFrame.Visible = false
+        timerEndTime = 0
+        lastThinkPly = -1
+    end
+end)
+
+resyncBtn.MouseButton1Click:Connect(function()
+    local board = getBoard()
+    if board then
+        Bot.state = nil
+        Bot.lastGrid = nil
+        Bot.lastPly = -1
+        Bot.awaitingServerUpdate = false
+        Bot.awaitingStartTime = 0
+        isTimerRunning = false
+        lastThinkPly = -1
+        resync(board)
+        resyncBtn.Text = "Resynced!"
+        task.wait(1)
+        resyncBtn.Text = "Resync Board"
+    end
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+    scrollFrame.Visible = not scrollFrame.Visible
+    infoPanel.Visible = scrollFrame.Visible
+    bottomArea.Visible = scrollFrame.Visible
+    mainFrame.Size = scrollFrame.Visible and UDim2.new(0, 210, 0, 560) or UDim2.new(0, 210, 0, 28)
+end)
+
+-- ========== STOCKFISH STARTUP CHECK ==========
+task.spawn(function()
+    task.wait(1)
+    local req = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or (krnl and krnl.request) or request or http_request
+    if not req then
+        stockfishWorking = false
+        evalLabel.Text = "SF: no http"
+        evalLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
+        showLocalUI()
+        return
+    end
+    evalLabel.Text = "SF: testing..."
+    local testFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    local mv = askStockfish(testFen, 8, 20)
+    if mv then
+        stockfishWorking = true
+        evalLabel.Text = "SF: online ✓"
+        evalLabel.TextColor3 = Color3.fromRGB(120, 255, 120)
+        showStockfishUI()
+    else
+        stockfishWorking = false
+        evalLabel.Text = "SF: offline → local"
+        evalLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
+        showLocalUI()
+        print("[SF] startup error: " .. stockfishLastError)
     end
 end)
