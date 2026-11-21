@@ -1,4 +1,4 @@
--- ========== CHESS HACK V28: STOCKFISH UI SWAP + TURN GATE ==========
+-- ========== CHESS HACK V29: STOCKFISH UI SWAP + PERFECT MINI BOARD ==========
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
@@ -6,7 +6,7 @@ local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-for _, name in ipairs({"ChessHackV19", "ChessHackV20", "ChessHackV21", "ChessHackV22", "ChessHackV23", "ChessHackV24", "ChessHackV25", "ChessHackV26", "ChessHackV27", "ChessHackV28", "RoblyHighlights", "HumanTimerGui", "HiddenBoardGui", "MoveAssist"}) do
+for _, name in ipairs({"ChessHackV19", "ChessHackV20", "ChessHackV21", "ChessHackV22", "ChessHackV23", "ChessHackV24", "ChessHackV25", "ChessHackV26", "ChessHackV27", "ChessHackV28", "ChessHackV29", "RoblyHighlights", "HumanTimerGui", "HiddenBoardGui", "MoveAssist"}) do
     local old = playerGui:FindFirstChild(name)
     if old then old:Destroy() end
 end
@@ -34,15 +34,12 @@ local useVortexFallback = true
 
 -- ========== STOCKFISH STATE ==========
 local stockfishDepth = 12
-local stockfishSkill = 20    -- 0..20 (stockfish.online поддерживает skillLevel)
-local stockfishMoveTime = 1000 -- ms, для API мы отправляем depth но сохраняем для UI
+local stockfishSkill = 20
+local stockfishMoveTime = 1000
 local stockfishWorking = nil
 local stockfishLastError = ""
 
 -- ========== THINK GATE ==========
--- Мы думаем ТОЛЬКО когда сходил противник.
--- lastThinkPly = кол-во ucis на момент, когда мы в последний раз инициировали thinking.
--- Когда #ucis == lastThinkPly — уже думали/сходили, не надо повторять.
 local lastThinkPly = -1
 
 -- ========== APP ==========
@@ -60,7 +57,7 @@ do
     if ok2 and type(bh) == "table" then BoardHelper = bh end
 end
 
--- ========== LOCAL ENGINE (unchanged) ==========
+-- ========== LOCAL ENGINE ==========
 local VALUES = { P = 100, N = 320, B = 330, R = 500, Q = 900, K = 0 }
 local PST = {
     P = { 0,0,0,0,0,0,0,0, 50,50,50,50,50,50,50,50, 10,10,20,30,30,20,10,10, 5,5,10,25,25,10,5,5, 0,0,0,20,20,0,0,0, 5,-5,-10,0,0,-10,-5,5, 5,10,10,-20,-20,10,10,5, 0,0,0,0,0,0,0,0 },
@@ -372,7 +369,7 @@ local function httpRequest(options)
     return res
 end
 
--- ========== STOCKFISH.ONLINE ==========
+-- ========== STOCKFISH ==========
 local STOCKFISH_URL = "https://stockfish.online/api/s/v2.php"
 
 local function askStockfish(fen, depth, skill)
@@ -574,7 +571,7 @@ local function redrawVisuals()
     end
 end
 
--- ========== HIDDEN BOARD ==========
+-- ========== HIDDEN BOARD (PERFECT GRID) ==========
 local hiddenGui = Instance.new("ScreenGui")
 hiddenGui.Name = "HiddenBoardGui"
 hiddenGui.ResetOnSpawn = false
@@ -585,8 +582,7 @@ local miniBoard = Instance.new("Frame")
 miniBoard.Size = UDim2.new(0, hiddenBoardSize, 0, hiddenBoardSize)
 miniBoard.Position = UDim2.new(0.5, -hiddenBoardSize/2, 0.5, -hiddenBoardSize/2)
 miniBoard.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-miniBoard.BorderSizePixel = 2
-miniBoard.BorderColor3 = Color3.fromRGB(0, 0, 0)
+miniBoard.BorderSizePixel = 0
 miniBoard.Active = true
 miniBoard.Visible = false
 miniBoard.Parent = hiddenGui
@@ -597,17 +593,30 @@ miniGrid.Size = UDim2.new(1, 0, 1, 0)
 miniGrid.BackgroundTransparency = 1
 miniGrid.Parent = miniBoard
 
+local gridPad = Instance.new("UIPadding", miniGrid)
+gridPad.PaddingTop = UDim.new(0, 2)
+gridPad.PaddingBottom = UDim.new(0, 2)
+gridPad.PaddingLeft = UDim.new(0, 2)
+gridPad.PaddingRight = UDim.new(0, 2)
+
+local miniGridLayout = Instance.new("UIGridLayout")
+miniGridLayout.CellSize = UDim2.new(0.125, 0, 0.125, 0)
+miniGridLayout.CellPadding = UDim2.new(0, 0, 0, 0)
+miniGridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+miniGridLayout.Parent = miniGrid
+
 local miniOverlays = {}
-local miniSquares = {}
+local miniSquareFrames = {}
+
 for r = 1, 8 do
     for c = 1, 8 do
         local sqFrame = Instance.new("Frame")
-        sqFrame.Size = UDim2.new(1/8, 0, 1/8, 0)
-        sqFrame.Position = UDim2.new((c-1)/8, 0, (8-r)/8, 0)
         sqFrame.BackgroundColor3 = (r + c) % 2 == 0 and Color3.fromRGB(240, 240, 240) or Color3.fromRGB(120, 120, 120)
         sqFrame.BorderSizePixel = 0
+        sqFrame.LayoutOrder = (r - 1) * 8 + c
         sqFrame.Parent = miniGrid
-        miniSquares[(r-1)*8 + c] = sqFrame
+        miniSquareFrames[r] = miniSquareFrames[r] or {}
+        miniSquareFrames[r][c] = sqFrame
     end
 end
 
@@ -615,10 +624,12 @@ local function drawMiniHighlight(m)
     for _, obj in ipairs(miniOverlays) do obj:Destroy() end
     miniOverlays = {}
     if not m then return end
+    
     local function highlightSquare(idx, color)
         local r = math.floor(idx / 8) + 1
         local c = (idx % 8) + 1
-        local sqFrame = miniSquares[(8-r)*8 + c]
+        local sqFrame = miniSquareFrames[r] and miniSquareFrames[r][c]
+        
         if sqFrame then
             local h = Instance.new("Frame")
             h.Size = UDim2.new(1, 0, 1, 0)
@@ -630,6 +641,7 @@ local function drawMiniHighlight(m)
             table.insert(miniOverlays, h)
         end
     end
+    
     highlightSquare(m.from, fromColor)
     highlightSquare(m.to, toColor)
 end
@@ -679,9 +691,9 @@ timerText.Font = Enum.Font.GothamBold
 timerText.TextSize = 20
 timerText.Parent = timerFrame
 
--- ========== UI ==========
+-- ========== MAIN UI ==========
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "ChessHackV28"
+screenGui.Name = "ChessHackV29"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
@@ -708,7 +720,7 @@ local titleText = Instance.new("TextLabel")
 titleText.Size = UDim2.new(1, -30, 1, 0)
 titleText.Position = UDim2.new(0, 10, 0, 0)
 titleText.BackgroundTransparency = 1
-titleText.Text = "STOCKFISH v28"
+titleText.Text = "STOCKFISH v29"
 titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleText.Font = Enum.Font.GothamBold
 titleText.TextSize = 12
@@ -1019,7 +1031,6 @@ local function createSlider(parent, name, default, minVal, maxVal, callback, pre
 end
 
 -- ========== BUILD UI ==========
--- Section: ENGINE (container will hold either SF or local settings)
 local engineSectionTitle = createSectionTitle("Stockfish")
 
 local sfContainer = Instance.new("Frame")
@@ -1044,28 +1055,19 @@ localLayout.SortOrder = Enum.SortOrder.LayoutOrder
 localLayout.Parent = localContainer
 
 local localSectionTitle = createSectionTitle("Local Engine (fallback)")
--- Move to localContainer
 localSectionTitle.Parent = localContainer
 localSectionTitle.LayoutOrder = 0
 
--- 3 Stockfish sliders
 createSlider(sfContainer, "SF depth", stockfishDepth, 5, 15, function(v) stockfishDepth = v end)
 createSlider(sfContainer, "SF skill (0-20)", stockfishSkill, 0, 20, function(v) stockfishSkill = v end)
 createSlider(sfContainer, "SF move time (ms)", stockfishMoveTime, 100, 5000, function(v) stockfishMoveTime = v end)
 
--- Local settings (in localContainer)
-localSectionTitle.Parent = localContainer
-
--- We need local sliders inside localContainer, but createSlider uses scrollFrame by default.
--- We'll temporarily create them, then re-parent the containers.
-
 local function buildLocalSliders()
-    local dSlider = createSlider(localContainer, "Depth", currentDepth, 1, 5, function(v) currentDepth = v end)
-    local bSlider = createSlider(localContainer, "Think budget", 15, 2, 20, function(v) currentNodeCap = v * 10000 end)
+    createSlider(localContainer, "Depth", currentDepth, 1, 5, function(v) currentDepth = v end)
+    createSlider(localContainer, "Think budget", 15, 2, 20, function(v) currentNodeCap = v * 10000 end)
 end
 buildLocalSliders()
 
--- Auto-Move Speed section (always shown)
 createSectionTitle("Auto-Move Speed")
 local setMinDelay, setMaxDelay
 local delayPreview
@@ -1146,7 +1148,6 @@ listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     scrollFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
 end)
 
--- ========== ENGINE UI TOGGLE ==========
 local function showStockfishUI()
     sfContainer.Visible = true
     localContainer.Visible = false
@@ -1193,7 +1194,6 @@ task.spawn(function()
                 end
 
                 if ok and myTurn then
-                    -- Sync on new turn
                     if #ucis ~= Bot.lastPly or not Bot.state then
                         Bot.lastPly = #ucis
                         Bot.awaitingServerUpdate = false
@@ -1266,8 +1266,6 @@ task.spawn(function()
 
                     if Bot.state then
                         Bot.ourSide = Bot.state.side
-
-                        -- THINK GATE: only think if this ply hasn't been thought about yet
                         local alreadyThoughtThisPly = (lastThinkPly == #ucis)
                         local canTrigger = not isCalculating and not isTimerRunning and not Bot.awaitingServerUpdate and not alreadyThoughtThisPly
                         if canTrigger and enableAutoPlay then
@@ -1275,7 +1273,7 @@ task.spawn(function()
                         end
 
                         if canTrigger then
-                            lastThinkPly = #ucis  -- lock this ply
+                            lastThinkPly = #ucis
                             isCalculating = true
                             calculationToken = calculationToken + 1
                             local token = calculationToken
